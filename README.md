@@ -25,6 +25,3 @@ session run `diff -r extensions ~/.pi/agent/extensions` and `diff AGENTS.md ~/sr
 Browser: `AGENTS.md` hard-codes the Ubuntu snap path (`/snap/chromium/current/...`), so it is
 meant for the Ubuntu VPS. Your sandbox script must expose that path (bind `/snap`). Smoke test
 after install: one unit-test run with N > 0, one browser test, one `describe_screenshot` call.
-# pi-odoo-agent
-# pi-odoo-agent
-# pi-odoo-agent
