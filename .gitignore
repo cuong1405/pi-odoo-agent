@@ -1,0 +1,16 @@
+# Credentials and per-host state: never commit
+auth.json
+mcp.json
+host.env
+.env
+*.key
+*.pem
+
+# Generated or machine-specific
+node_modules/
+*.bak
+*.bak.*
+backups/
+sessions/
+models-store.json
+*.vision.md
