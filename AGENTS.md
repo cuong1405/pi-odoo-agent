@@ -69,6 +69,11 @@ Rules:
 - Quick syntax gate before any run: `~/src/odoo/venv/bin/python -m py_compile <file>`.
 - A change to addon code, JS, SCSS, templates or `ir.asset`/`ir.ui.view` data needs a
   server restart on the served DB; `-u` alone leaves stale assets.
+- Servers: start one only inside your own session and record its pid
+  (`nohup ... & echo $! > ~/src/odoo/log/server.pid`); stop it with
+  `kill "$(cat ~/src/odoo/log/server.pid)"`. Never `pkill -f`/`killall`: your shell's own
+  command line matches the pattern, and servers started outside this sandbox are invisible
+  to you. If a port is busy and no pid file is yours, use another `--http-port` or report it.
 - `--dev=reload,xml` is for interactive iteration only, never in a test gate.
 
 ## Reading results
