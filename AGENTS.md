@@ -4,6 +4,20 @@ Project-specific environment, commands and test-reporting rules. The Odoo skills
 hold the house rules for ORM, fields, XML, security, tests and JS/SCSS; where they disagree
 with habit, the skill wins, and on any blockage re-read the skill before guessing.
 
+## Skills: you must load them yourself
+
+Skills live in `~/.pi/agent/skills/<skill>/`. Links inside a `SKILL.md` or guideline
+(`guidelines/tests.md`, `tests.md`) are relative to that skill's directory, not to your cwd
+or the addon: `tests.md` here means `~/.pi/agent/skills/odoo-guidelines/guidelines/tests.md`.
+`SKILL.md` is only an index; the rules are in the `guidelines/*.md` files it links.
+
+- Editing an addon file is **blocked** until you have read the matching guidelines with the
+  `read` tool, and again after a context compaction. The block message lists the files to
+  open; read them, then repeat the edit. Skills stack (Python plus tests plus XML, and so on).
+- Not covered by that block, so load them yourself when relevant: `odoo-security`
+  (`sudo`, routes, ACLs, public methods, raw SQL), `odoo-review` (self-review of your own
+  diff), `odoo-git` (commit message, branch).
+
 ## Environment
 
 | Item | Value |
