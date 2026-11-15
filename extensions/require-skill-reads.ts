@@ -22,9 +22,9 @@
  * bash `cat` of it is rejected on the spot); guideline files count when read with the
  * `read` tool or with bash `cat`/`head`/`sed`/... (models often use bash).
  *
- * Forgets everything on `session_compact` and `session_start`. Fails open: no SKILL.md on
- * disk means no requirement, and after MAX_BLOCKS blocks on one file the edit goes through
- * with a notification, so a broken install can never deadlock an autonomous loop.
+ * Forgets everything on `session_compact` and `session_start`. There is no retry cap: the
+ * edit stays blocked until the files are read (a human stops a stuck session). The only
+ * fail-open is a missing SKILL.md on disk, which means no requirement.
  *
  * Install: copy to ~/.pi/agent/extensions/require-skill-reads.ts and run /reload.
  * Override the skills directory with PI_SKILLS_DIR (default ~/.pi/agent/skills).
@@ -35,7 +35,6 @@ import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const MAX_BLOCKS = 3;
 const MAX_LISTED_ROWS = 30;
 const SKILLS_DIR = path.resolve(
   process.env.PI_SKILLS_DIR || path.join(os.homedir(), ".pi", "agent", "skills"),
@@ -144,11 +143,9 @@ function inputPath(input: Record<string, unknown>): string | undefined {
 
 export default function (pi: ExtensionAPI) {
   const loaded = new Set<string>(); // absolute paths of skill files read this session
-  const blocks = new Map<string, number>(); // addon file -> times blocked
 
   const reset = () => {
     loaded.clear();
-    blocks.clear();
   };
   pi.on("session_start", reset);
   pi.on("session_compact", reset);
@@ -210,20 +207,7 @@ export default function (pi: ExtensionAPI) {
       missing.push(`${file}  (${row.title}: ${row.when})`);
     }
     const needPick = matched.length === 0 && !anyGuideline;
-    if (missing.length === 0 && !needPick) {
-      blocks.delete(abs);
-      return undefined;
-    }
-
-    const count = (blocks.get(abs) ?? 0) + 1;
-    blocks.set(abs, count);
-    if (count > MAX_BLOCKS) {
-      ctx.ui?.notify?.(
-        `require-skill-reads: letting ${path.basename(abs)} through after ${MAX_BLOCKS} blocks`,
-        "warning",
-      );
-      return undefined;
-    }
+    if (missing.length === 0 && !needPick) return undefined;
 
     let reason = `Blocked: load the Odoo guidelines for this file before editing ${abs}.\n`;
     if (missing.length) {
