@@ -19,8 +19,8 @@ A `SKILL.md` is only an index; the rules are in the `guidelines/*.md` files it l
   edit. Skills stack (Python plus tests plus XML, and so on; `static/` code uses
   `odoo-web-guidelines`).
 - Not covered by that block, so load them yourself when relevant: `odoo-security`
-  (`sudo`, routes, ACLs, public methods, raw SQL), `odoo-review` (self-review of your own
-  diff), `odoo-git` (commit message, branch).
+  (`sudo`, routes, ACLs, public methods, raw SQL), `odoo-git` (commit message, branch).
+  `odoo-review` is loaded for you at the end of the task (see "Finishing: the review gate").
 
 ## No comments in code
 
@@ -28,7 +28,7 @@ Never write comments in code you add or change: no `#`, `<!-- -->`, `//`, `/* */
 no docstrings, in Python, XML, JS, SCSS or tests. Say it with names, structure and small
 functions instead; if code needs a comment to be understood, rename or restructure it. This
 overrides any skill guideline that asks for a justifying comment (for example on `sudo()` or
-`at_install`): put the justification in the ledger **Decisions** and the commit message.
+`at_install`): put the justification in the commit message.
 Tool directives a linter requires (`# noqa`, `eslint-disable`) and the manifest/XML
 declarations are not comments. Leave existing comments in code you did not otherwise touch
 alone; remove those in lines you rewrite.
@@ -197,7 +197,7 @@ A test never seen red is not evidence. For each new or changed test:
 2. Confirm it fails **and** that the message points at the broken method/field.
 3. Restore the code, confirm green, and check `git diff` shows no leftover break.
 
-Record test name, the break tried and the message produced in the ledger row. If you cannot
+Put the test name, the break tried and the message produced in the commit message. If you cannot
 break it, the test asserts nothing useful: rewrite it.
 
 ### Fix discipline
@@ -213,75 +213,60 @@ Time is not a constraint, thoroughness is: spend it on verification, not on aski
 
 ### Do not stop to ask
 - Resolve ambiguity yourself: pick the interpretation closest to the stated requirement and
-  Odoo conventions (skills, then 20.0 source), and record it under **Assumptions** in the
-  progress file. Never ask the human questions or request approval: you cannot hand the
-  turn back, and the human checks in on the session themselves.
+  Odoo conventions (skills, then 20.0 source) and state it as an assumption in the final
+  report. Never ask the human questions or request approval: you cannot hand the turn back,
+  and the human checks in on the session themselves.
 - If something truly blocks a requirement (missing credentials, contradictory requirements),
-  mark its row `blocked` with exactly what blocks you and what you tried, try another
-  approach, and keep working on the other rows. Never act on `pouet` to get around it.
+  note exactly what blocks you and what you tried, try another approach, and keep working on
+  the rest. Never act on `pouet` to get around it.
 
-### Requirement ledger (first step of every task)
-Before writing code, split the task into numbered atomic requirements, each tagged
-**MUST** (explicitly stated, or implied by one) or **SHOULD** (nice-to-have). Write them to
-`~/src/odoo/log/<task>_progress.md` (outside the addon repo; this file survives context
-loss: re-read it after any context reset). Per requirement keep:
+### Finishing: the review gate
+When you try to finish after editing code, the `require-review-gate` extension holds the
+turn open until you have reviewed your own work and fixed what the review found:
+1. Open the `odoo-review` skill's `SKILL.md` with the `read` tool again (even if you read it
+   before) and follow its Process on the module you changed. In the merits pass also re-read
+   the original task text and run the module's tests: a requirement that is
+   missing, wrong or untested is a finding.
+2. Write the report to `~/src/odoo/log/<task>_review.md` as the extension's message tells
+   you: a header with the pinned HEAD and base commits, a findings table
+   (`# | File:line | Defect | Failure scenario | Fix | Guideline section or *judgement* | Status`),
+   and a closing `Guidelines read:` line. With no findings, write `No findings.`.
+3. Fix the findings (the test that would have caught each one, red first; commit) and set
+   their Status to `fixed`. Leave an ambiguous one `flagged` with the reason. At least 90% of
+   the findings must be `fixed`; the extension re-checks every time you try to finish and
+   lists what is open.
 
-| # | Requirement | MUST/SHOULD | Test (name) | Evidence (log line / screenshot) | Status |
-|---|---|---|---|---|---|
+Before you try to finish, have these done, since the review will find them otherwise:
+- A fresh install on a new test DB (`-i <module> --without-demo`) and a `-u` on a DB that
+  already has the module, both succeeding (also with demo data if the module ships demo).
+- The full module suite green with N > 0 (see "Reading results"), after your last code
+  change; no `ERROR` / `Traceback` / unexpected `WARNING` from your module in the logs.
+- `git status` clean apart from intended changes: commit them, remove debug code, stray
+  files and any leftover deliberate break from "Prove the test can fail".
+- For UI tasks: the browser test ran and every screenshot was inspected with
+  `describe_screenshot` ("Browser tests"). A green browser test alone never satisfies this.
 
-Keep this exact header (the done gate reads the MUST/SHOULD and Status columns). Status is
-`todo`, `verified` (test green, seen red first, evidence recorded) or `blocked`.
-Add rows as you discover implied requirements (access rights, translations, demo data,
-menus, reports). Keep the same file updated with **Assumptions**, **Decisions** (and why)
-and **Failed attempts** (so you never repeat a dead end).
-
-### Definition of done
-The `require-done-gate` extension sends you back to work if you try to stop after editing
-code while any of these fail: the ledger has a MUST row not `verified` or under 90% rows
-`verified`; no green full-module run (`--test-tags '/<module>'`, fresh log, N > 0) happened
-after your last edit; `git status` is not clean (commit intended changes, delete strays and
-any leftover deliberate break). Fix what it lists. There is no way to hand the turn back
-early: keep working until the checks pass.
-
-It cannot check the rest, so you also must have:
-1. A fresh install on a new test DB (`-i <module> --without-demo`) and a `-u` on a DB that
-   already has the module, both succeeding (also with demo data if the module ships demo).
-2. No `ERROR` / `Traceback` / unexpected `WARNING` from your module in the install and test
-   logs (invalid view arch, missing ACL).
-3. The self-review below done and its findings fixed.
-4. For UI tasks: the browser test ran, each screenshot was inspected with
-   `describe_screenshot`, and each UI row has its evidence ("Browser tests"). A green browser
-   test alone never satisfies this.
-
-Never mark a row `verified` without a run you saw pass this session; list every row that is
-not `verified` with the reason.
-
-### Self-review pass (before reporting done)
-Do this as a separate step with fresh eyes: re-read the original task text, not your notes,
-then review your own diff with the `odoo-review` skill (it dispatches to guidelines,
-web-guidelines and security as needed). Specifically look for:
-- Requirements that are implemented but never tested, or tested only on the happy path.
-- Missing negative cases: wrong user/group, empty or multi-record sets, multi-company,
-  archived records, duplicate or invalid input, cancel/reopen flows.
+The merits pass must also cover, beyond the guidelines:
+- Negative cases: wrong user/group, empty or multi-record sets, multi-company, archived
+  records, duplicate or invalid input, cancel/reopen flows.
 - Access: new models without ACL rows, `sudo()` without justification, record rules that
   leak across companies, public methods callable by users who should not.
 - Data and upgrade: new required fields without defaults on existing records, `-u` on a
   populated DB, XML ids stable and unique.
-- Gaps against the ledger: if you cannot point at a green test for a MUST, it is not done.
-Fix what you find, add the test that would have caught it (red first), and re-run the gate.
 
 ### Never game the result
 - Never weaken, delete, skip or `expectedFailure` a test to get green. Changing an expected
-  value needs a requirement-based reason in **Decisions**.
+  value needs a requirement-based reason in the commit message.
 - Never widen a regex, catch-all `except` or loosen an access rule just to make a test pass.
+- Never mark a finding `fixed` without a run you saw pass this session.
 - Report faithfully: if something is not done or not verified, say so in the final report;
   a smaller honest result beats a larger unverified one.
 
 ### Final report (what the human reads)
 Keep it short and evidence-based:
-1. Outcome vs the original task in one paragraph, with the verified-requirement score
-   (e.g. `17/18 verified, 0 MUST open`).
-2. The ledger table with test names and status.
+1. Outcome vs the original task in one paragraph, with the review score (e.g.
+   `9/10 findings fixed, 1 flagged`).
+2. The task's requirements, each with its test name and evidence.
 3. Assumptions made and decisions taken (each with the reason).
 4. Gate evidence: commit hash, exact commands, `odoo.tests.result` line with N, log paths.
 5. Known gaps, risks and anything that needs a human decision.
@@ -358,9 +343,9 @@ page loads, so green says nothing about the UI. A UI requirement is verified onl
 `describe_screenshot` has inspected the image and *you* have judged its report against the
 requirement. A blank page, error dialog, missing data, wrong view or broken layout is a
 failed requirement even with a green test.
-In the ledger, a UI row's Evidence must be the PNG path plus a one-sentence description of
-what you saw (for example "list shows 3 rows, column Total = 120.00, no error banner"),
-and the row stays `todo` until you have written it. Capture the states that matter
+For each UI requirement keep the PNG path plus a one-sentence description of what you saw
+(for example "list shows 3 rows, column Total = 120.00, no error banner"); it is not
+verified until you have written it. Capture the states that matter
 (populated, empty, an error or warning state, the relevant form/kanban/list), not just the
 happy default. If the image contradicts the requirement, fix the code and re-capture.
 
@@ -376,8 +361,8 @@ happy default. If the image contradicts the requirement, fix the code and re-cap
 - The report is a model's reading and can be wrong. If it contradicts the test or the code,
   re-ask with a narrower question rather than trusting either blindly. Never edit a report.
 - The tool saves each report as `<png>.vision.md` next to the image. Put that path and the
-  one-sentence Answer summary in the ledger row's Evidence.
-- If the tool fails for every model, it says so: report a blocker. Do not mark UI rows
-  `verified` and do not describe the screenshot from imagination or from the test output.
+  one-sentence Answer summary in the final report.
+- If the tool fails for every model, it says so: report a blocker. Do not treat UI
+  requirements as verified and do not describe the screenshot from imagination or from the test output.
 - Confirm the expected view rendered: not blank, not a "Bad Request" or error page, correct
   view and data. A file existing proves nothing. Do not move or rename screenshots.
