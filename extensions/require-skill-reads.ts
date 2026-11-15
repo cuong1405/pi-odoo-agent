@@ -6,7 +6,8 @@
  * `guidelines/*.md`). Prose in AGENTS.md cannot force that, so this extension does.
  *
  * Behaviour:
- *  - Records every successful `read` of a file under the skills directory.
+ *  - Records every `read` of a file under the skills directory, and every bash
+ *    `cat`/`head`/`tail`/`sed`/`less`/`more`/`bat`/`nl` of one (models often use bash).
  *  - Before an `edit` / `write` of an addon file, checks that the guideline files matching
  *    that file type were read in this session; if not, blocks the call and names the exact
  *    files to read. The agent reads them and repeats the edit.
@@ -102,6 +103,21 @@ function inputPath(input: Record<string, unknown>): string | undefined {
   return typeof raw === "string" && raw ? raw : undefined;
 }
 
+/**
+ * Models often read skill files with `cat`/`head`/`sed` in bash instead of the read tool.
+ * Count a skill .md file as read when a reader command names it (a listing or grep is not).
+ */
+const READER_COMMAND = /\b(cat|head|tail|sed|less|more|bat|nl)\b/;
+function skillFilesReadBy(command: string, cwd: string): string[] {
+  if (!READER_COMMAND.test(command)) return [];
+  const found: string[] = [];
+  for (const m of command.matchAll(/(?:~|\$\{?HOME\}?|\/)[^\s'"|;&<>()`]*\.md/g)) {
+    const abs = expand(m[0].replace(/^\$\{?HOME\}?/, "~"), cwd);
+    if (abs.startsWith(SKILLS_DIR + path.sep) && existsSync(abs)) found.push(abs);
+  }
+  return found;
+}
+
 export default function (pi: ExtensionAPI) {
   const loaded = new Set<string>(); // absolute paths of skill files read this session
   const blocks = new Map<string, number>(); // addon file -> times blocked
@@ -113,16 +129,23 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", reset);
   pi.on("session_compact", reset);
 
-  pi.on("tool_result", async (event, ctx) => {
-    if (event.toolName !== "read" || event.isError) return undefined;
-    const raw = inputPath(event.input);
-    if (!raw) return undefined;
-    const abs = expand(raw, ctx.cwd);
-    if (abs.startsWith(SKILLS_DIR + path.sep)) loaded.add(abs);
-    return undefined;
-  });
-
   pi.on("tool_call", async (event, ctx) => {
+    // Record reads when the call STARTS (not when it finishes): sibling calls of one
+    // assistant message are checked in order before any of them runs, so a read and an
+    // edit sent together would otherwise block the edit. Only existing files count.
+    if (event.toolName === "read") {
+      const raw = inputPath(event.input as Record<string, unknown>);
+      if (raw) {
+        const abs = expand(raw, ctx.cwd);
+        if (abs.startsWith(SKILLS_DIR + path.sep) && existsSync(abs)) loaded.add(abs);
+      }
+      return undefined;
+    }
+    if (event.toolName === "bash") {
+      const command = String((event.input as { command?: unknown }).command ?? "");
+      for (const abs of skillFilesReadBy(command, ctx.cwd)) loaded.add(abs);
+      return undefined;
+    }
     if (event.toolName !== "edit" && event.toolName !== "write") return undefined;
     const raw = inputPath(event.input as Record<string, unknown>);
     if (!raw) return undefined;
