@@ -10,6 +10,7 @@ Odoo's own setup).
 | `extensions/no-shell-file-edits.ts` | `~/.pi/agent/extensions/` |
 | `extensions/describe-screenshot.ts` | `~/.pi/agent/extensions/` |
 | `extensions/require-skill-reads.ts` | `~/.pi/agent/extensions/` |
+| `extensions/require-done-gate.ts` | `~/.pi/agent/extensions/` |
 
 ```bash
 cp AGENTS.md ~/src/odoo/AGENTS.md

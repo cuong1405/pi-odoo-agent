@@ -95,8 +95,9 @@ Rules:
 
 ## Reading results
 
-Only read the log of the run you just made (fresh file, see "Command template"). If the file
-holds more than one run, the verdict is invalid: delete it and run again.
+Read only the log of the run you just made (fresh file, see "Command template"); a log with
+more than one run is invalid: delete it and re-run. Never report green from a run with
+N = 0, from a different tag spec than the gate, or from a log you did not read.
 
 1. `grep odoo.tests.result <log>` must show exactly one line, `0 failed, 0 error(s) of N tests`
    with **N > 0**. Ignore `odoo.tests.stats`. Several result lines mean the log is stale or
@@ -112,9 +113,9 @@ traceback. Act on what it points to before forming your own hypothesis.
 
 ## Writing tests that diagnose (core rule)
 
-The next round of the agent loop sees only the failing output. A failure like
-`False is not true` wastes a round; one that names the method, field, expected value and
-likely cause saves it. Every test you write must be diagnosable from its failure alone.
+When a test fails you see only its output. A failure like `False is not true` costs a round
+of guessing; one that names the method, field, expected value and likely cause saves it.
+Every test you write must be diagnosable from its failure alone.
 This complements `tests.md` (assert behaviour, not implementation); the hint lives in the
 message, never in the assertion logic.
 
@@ -184,17 +185,14 @@ A test never seen red is not evidence. For each new or changed test:
 2. Confirm it fails **and** that the message points at the broken method/field.
 3. Restore the code, confirm green, and check `git diff` shows no leftover break.
 
-Report in the handoff: test name, the break tried, the message produced. If you cannot break
-it, the test asserts nothing useful: rewrite it.
+Record test name, the break tried and the message produced in the ledger row. If you cannot
+break it, the test asserts nothing useful: rewrite it.
 
-### Loop discipline
+### Fix discipline
 
-- Fix order: blockers, requirement gaps, majors, hygiene.
-- Iterate on the single failing method, then run the full module gate once before handoff.
+- Iterate on the single failing method, then run the full module gate once.
 - A second failed fix attempt is a stop sign: re-read the skill and the 20.0 source, then
   change approach instead of trying another blind variation.
-- Handoff evidence: commit hash, the gate command, the `odoo.tests.result` line with N, and
-  the log path.
 
 ## Autonomous operation (long sessions, minimal human review)
 
@@ -213,33 +211,37 @@ Time is not a constraint, thoroughness is: spend it on verification, not on aski
 Before writing code, split the task into numbered atomic requirements, each tagged
 **MUST** (explicitly stated, or implied by one) or **SHOULD** (nice-to-have). Write them to
 `~/src/odoo/log/<task>_progress.md` (outside the addon repo; this file survives context
-loss, so re-read it at the start of every round). Per requirement keep:
+loss: re-read it after any context reset). Per requirement keep:
 
 | # | Requirement | MUST/SHOULD | Test (name) | Evidence (log line / screenshot) | Status |
 |---|---|---|---|---|---|
 
-Status is `todo`, `verified` (test green, seen red first, evidence recorded) or `blocked`.
+Keep this exact header (the done gate reads the MUST/SHOULD and Status columns). Status is
+`todo`, `verified` (test green, seen red first, evidence recorded) or `blocked`.
 Add rows as you discover implied requirements (access rights, translations, demo data,
 menus, reports). Keep the same file updated with **Assumptions**, **Decisions** (and why)
 and **Failed attempts** (so you never repeat a dead end).
 
-### Definition of done (all must hold before you report completion)
-1. Every MUST row is `verified`; at least 90% of all rows are `verified`; every remaining
-   row is listed with the reason. Never mark a row `verified` without a test run you
-   actually saw pass in this session.
-2. A fresh install on a new test DB succeeds (`-i <module> --without-demo`), and so does
-   an update (`-u`) on a DB that already has it. Check both with and without demo data if
-   the module ships demo.
-3. The full module suite is green with N > 0 (see "Reading results"), after the last code
-   change. Re-run it after any later edit; green from an earlier state does not count.
-4. No `ERROR` / `Traceback` / unexpected `WARNING` from your module in the install and
-   test logs (views and access rows especially: invalid view arch, missing ACL).
-5. `git status` is clean apart from intended changes; no debug code, no leftover
-   deliberate breaks from "prove the test can fail", no stray files.
-6. The self-review below was done and its findings fixed.
-7. If the task has UI, the browser test ran, you inspected each screenshot with
-   `describe_screenshot`, and each UI requirement has the report's evidence recorded
-   (see "Browser tests"). A green browser test alone never satisfies this.
+### Definition of done
+The `require-done-gate` extension sends you back to work if you try to stop after editing
+code while any of these fail: the ledger has a MUST row not `verified` or under 90% rows
+`verified`; no green full-module run (`--test-tags '/<module>'`, fresh log, N > 0) happened
+after your last edit; `git status` is not clean (commit intended changes, delete strays and
+any leftover deliberate break). Fix what it lists. If only the human can unblock you, add a
+line `NEEDS-HUMAN: <what blocks you, what you tried>` to the progress file and stop.
+
+It cannot check the rest, so you also must have:
+1. A fresh install on a new test DB (`-i <module> --without-demo`) and a `-u` on a DB that
+   already has the module, both succeeding (also with demo data if the module ships demo).
+2. No `ERROR` / `Traceback` / unexpected `WARNING` from your module in the install and test
+   logs (invalid view arch, missing ACL).
+3. The self-review below done and its findings fixed.
+4. For UI tasks: the browser test ran, each screenshot was inspected with
+   `describe_screenshot`, and each UI row has its evidence ("Browser tests"). A green browser
+   test alone never satisfies this.
+
+Never mark a row `verified` without a run you saw pass this session; list every row that is
+not `verified` with the reason.
 
 ### Self-review pass (before reporting done)
 Do this as a separate step with fresh eyes: re-read the original task text, not your notes,
@@ -252,16 +254,13 @@ web-guidelines and security as needed). Specifically look for:
   leak across companies, public methods callable by users who should not.
 - Data and upgrade: new required fields without defaults on existing records, `-u` on a
   populated DB, XML ids stable and unique.
-- Gaps against the ledger: re-count the rows; if you cannot point at a green test for a
-  MUST, it is not done.
+- Gaps against the ledger: if you cannot point at a green test for a MUST, it is not done.
 Fix what you find, add the test that would have caught it (red first), and re-run the gate.
 
 ### Never game the result
 - Never weaken, delete, skip or `expectedFailure` a test to get green. Changing an expected
   value needs a requirement-based reason in **Decisions**.
 - Never widen a regex, catch-all `except` or loosen an access rule just to make a test pass.
-- Never report green from a run with N = 0, from a different tag spec than the gate, or from
-  a log you did not read.
 - Report faithfully: if something is not done or not verified, say so in the final report;
   a smaller honest result beats a larger unverified one.
 
@@ -341,12 +340,11 @@ class Test<Module>Visual(HttpCase):
 Never hardcode host, port or DB in the URL. The `/web?db=…#action=` form is the one that
 honours the hash.
 
-**The screenshot is the verification, not the test result.** These tests are deliberately
-written to pass whenever the page loads, so a green result says nothing about whether the UI
-is right. A UI requirement is verified only when a vision model has inspected the image
-(via `describe_screenshot`, below) and *you* have judged its report against the requirement.
-A green test with a blank page,
-an error dialog, missing data, a wrong view or broken layout is a failed requirement.
+**The screenshot is the verification, not the test result.** These tests pass whenever the
+page loads, so green says nothing about the UI. A UI requirement is verified only when
+`describe_screenshot` has inspected the image and *you* have judged its report against the
+requirement. A blank page, error dialog, missing data, wrong view or broken layout is a
+failed requirement even with a green test.
 In the ledger, a UI row's Evidence must be the PNG path plus a one-sentence description of
 what you saw (for example "list shows 3 rows, column Total = 120.00, no error banner"),
 and the row stays `todo` until you have written it. Capture the states that matter
@@ -354,8 +352,7 @@ and the row stays `todo` until you have written it. Capture the states that matt
 happy default. If the image contradicts the requirement, fix the code and re-capture.
 
 **Inspect every generated PNG** under `/tmp/odoo_tests/<db>/screenshots/` with the
-`describe_screenshot` tool, one call per image. Do not open screenshots with `read`: your own
-model may be text-only, and many images in one conversation make the provider reject requests.
+`describe_screenshot` tool, one call per image (never open screenshots with `read`).
 
 - `path`: the PNG. `question`: the requirement stated checkably, e.g. "Is this the Sales
   Orders list with columns Number, Customer, Total, 3 rows, Total = 120.00 each, and no
