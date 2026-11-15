@@ -21,6 +21,17 @@ or the addon: `tests.md` here means `~/.pi/agent/skills/odoo-guidelines/guidelin
   (`sudo`, routes, ACLs, public methods, raw SQL), `odoo-review` (self-review of your own
   diff), `odoo-git` (commit message, branch).
 
+## No comments in code
+
+Never write comments in code you add or change: no `#`, `<!-- -->`, `//`, `/* */` prose and
+no docstrings, in Python, XML, JS, SCSS or tests. Say it with names, structure and small
+functions instead; if code needs a comment to be understood, rename or restructure it. This
+overrides any skill guideline that asks for a justifying comment (for example on `sudo()` or
+`at_install`): put the justification in the ledger **Decisions** and the commit message.
+Tool directives a linter requires (`# noqa`, `eslint-disable`) and the manifest/XML
+declarations are not comments. Leave existing comments in code you did not otherwise touch
+alone; remove those in lines you rewrite.
+
 ## Environment
 
 | Item | Value |
@@ -154,8 +165,8 @@ Honesty rules:
 - One behaviour per method, named `test_<model>_<action>_<expected>`: the name is already
   half the diagnosis.
 - Several fields on several records: `assertRecordValues(records, [...])`. It prints a
-  per-field diff but **takes no `msg`**, so put a one-line comment above it naming the
-  method/field to inspect, or wrap it in a helper that re-raises with the hint appended.
+  per-field diff but **takes no `msg`**, so wrap it in a helper that re-raises with the
+  method/field to inspect appended to the failure.
 - Multiple inputs: `with self.subTest(case=...)`, so one bad case does not hide the rest.
 - Expected errors: `assertRaisesRegex(ValidationError, "<key phrase>")` plus `mute_logger`
   where it logs, so a wrong exception type or message fails differently from "nothing
