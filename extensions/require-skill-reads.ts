@@ -10,17 +10,17 @@
  * other addon code -> odoo-guidelines). Everything else is read from that skill's own
  * SKILL.md at the moment of the edit, so updating the skill updates the gate.
  *
- * Before an `edit` / `write` of an addon code file the agent must have, in this session:
- *  1. read the skill's SKILL.md (the index), and
- *  2. read every guideline file whose index row names this kind of file (a row matches
+ * The agent never has to open SKILL.md: the extension parses its index table and puts it in
+ * the block message. Before an `edit` / `write` of an addon code file the agent must have,
+ * in this session:
+ *  1. read every guideline file whose index row names this kind of file (a row matches
  *     when a backticked path token in its "Read it when" text, such as `tests/`, `views/`,
  *     `__manifest__.py` or `*.scss`, matches the edited path), and
- *  3. read at least one guideline file of that skill (the agent picks it from the index
+ *  2. read at least one guideline file of that skill (the agent picks it from the index
  *     when no row names the file).
- * If not, the edit is blocked and the block message lists exactly what to read, including
- * the index rows to choose from. SKILL.md counts only when opened with the `read` tool (a
- * bash `cat` of it is rejected on the spot); guideline files count when read with the
- * `read` tool or with bash `cat`/`head`/`sed`/... (models often use bash).
+ * If not, the edit is blocked and the block message lists what is missing, followed by the
+ * skill's whole index table (title, absolute path, "Read it when"). Guideline files count
+ * when read with the `read` tool or with bash `cat`/`head`/`sed`/... (models often use bash).
  *
  * Forgets everything on `session_compact` and `session_start`. There is no retry cap: the
  * edit stays blocked until the files are read (a human stops a stuck session). The only
@@ -165,19 +165,6 @@ export default function (pi: ExtensionAPI) {
     if (event.toolName === "bash") {
       const command = String((event.input as { command?: unknown }).command ?? "");
       const files = skillFilesReadBy(command, ctx.cwd);
-      // SKILL.md is the index and must be opened with the read tool; guideline files may
-      // be read with any tool. Reject a bash read of an index right away (cheaper than
-      // letting the edit fail later) and do not record anything from that command.
-      const indexes = files.filter((file) => path.basename(file) === "SKILL.md");
-      if (indexes.length > 0) {
-        return {
-          block: true,
-          reason:
-            `Open skill index files with the read tool, not bash:\n` +
-            indexes.map((file) => `- ${file}`).join("\n") +
-            `\n(Guideline files under guidelines/ may be read with any tool.)`,
-        };
-      }
       for (const abs of files) loaded.add(abs);
       return undefined;
     }
@@ -198,9 +185,6 @@ export default function (pi: ExtensionAPI) {
     const anyGuideline = [...loaded].some((f) => f.startsWith(guidelinesDir));
 
     const missing: string[] = [];
-    if (!loaded.has(skillMd)) {
-      missing.push(`${skillMd}  (the index: which guideline covers what; use the read tool)`);
-    }
     for (const file of matched) {
       if (loaded.has(file)) continue;
       const row = rows.find((r) => r.file === file)!;
@@ -211,25 +195,28 @@ export default function (pi: ExtensionAPI) {
 
     let reason = `Blocked: load the Odoo guidelines for this file before editing ${abs}.\n`;
     if (missing.length) {
-      reason += `Read these first (SKILL.md with the read tool; guideline files with any tool), then repeat the edit:\n`;
+      reason += `Read these first (any tool), then repeat the edit:\n`;
       reason += missing.map((line) => `- ${line}`).join("\n") + "\n";
     }
     if (needPick) {
       reason +=
-        `No index row names this file type, so also read at least one guideline file that ` +
-        `${skill}/SKILL.md says covers your change. Its index lists:\n`;
-      const byFile = new Map<string, string[]>();
-      for (const row of rows) {
-        byFile.set(row.file, [...(byFile.get(row.file) ?? []), `${row.title}: ${row.when}`]);
-      }
+        `No index row names this file type: also read at least one guideline file from the ` +
+        `index below that covers your change.\n`;
+    }
+    const byFile = new Map<string, string[]>();
+    for (const row of rows) {
+      byFile.set(row.file, [...(byFile.get(row.file) ?? []), `${row.title}: ${row.when}`]);
+    }
+    if (byFile.size) {
+      reason += `\nIndex of ${skill} (from its SKILL.md; paths are absolute; read every file whose "Read it when" matches what you are about to change):\n`;
       for (const [file, topics] of [...byFile].slice(0, MAX_LISTED_ROWS)) {
-        reason += `- ${file}  (${topics.join("; ")})\n`;
+        const mark = loaded.has(file) ? " [already read]" : "";
+        reason += `- ${file}${mark}\n    ${topics.join("\n    ")}\n`;
       }
     }
     reason +=
-      `SKILL.md is only an index; the rules are in the guidelines/ files it links ` +
-      `(relative to its skill directory). They must be read again after a context ` +
-      `reset or compaction.`;
+      `\nThe rules are in the guideline files above, not in this index. They must be read ` +
+      `again after a context reset or compaction.`;
     return { block: true, reason };
   });
 }

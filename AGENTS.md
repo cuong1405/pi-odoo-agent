@@ -9,14 +9,15 @@ with habit, the skill wins, and on any blockage re-read the skill before guessin
 Skills live in `~/.pi/agent/skills/<skill>/`. Links inside a `SKILL.md` or guideline
 (`guidelines/tests.md`, `tests.md`) are relative to that skill's directory, not to your cwd
 or the addon: `tests.md` here means `~/.pi/agent/skills/odoo-guidelines/guidelines/tests.md`.
-`SKILL.md` is only an index; the rules are in the `guidelines/*.md` files it links.
+A `SKILL.md` is only an index; the rules are in the `guidelines/*.md` files it links.
 
-- Editing an addon file is **blocked** until you have read the skill's `SKILL.md` and the
-  guideline files its index says cover this change, and again after a context compaction.
-  Open `SKILL.md` with the `read` tool (a bash `cat` of it is rejected); guideline files can
-  be read with any tool. Pick every guideline whose "Read it when" matches what you are
-  about to do, not just one. The block message lists what is missing; read it, then repeat
-  the edit. Skills stack (Python plus tests plus XML, and so on).
+- Editing an addon file is **blocked** until you have read the guideline files that cover
+  this change, and again after a context compaction. You do not need to open `SKILL.md`: the
+  block message lists the missing files and the skill's whole index (each guideline's
+  absolute path and "Read it when"). Read every guideline whose "Read it when" matches what
+  you are about to do, not just the ones listed as missing, with any tool, then repeat the
+  edit. Skills stack (Python plus tests plus XML, and so on; `static/` code uses
+  `odoo-web-guidelines`).
 - Not covered by that block, so load them yourself when relevant: `odoo-security`
   (`sudo`, routes, ACLs, public methods, raw SQL), `odoo-review` (self-review of your own
   diff), `odoo-git` (commit message, branch).
