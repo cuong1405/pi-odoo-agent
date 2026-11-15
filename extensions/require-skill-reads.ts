@@ -61,14 +61,29 @@ function isAddonFile(abs: string): boolean {
   return false;
 }
 
-/** Which skill governs this file, or undefined when it is not covered code. */
-function skillFor(abs: string): string | undefined {
+/**
+ * Path segments of the file relative to its addon (nearest ancestor with a __manifest__.py,
+ * else the part after the last `addons` segment minus the addon name). Parent directories
+ * outside the addon, such as `~/data/` or `~/static/`, must never match a row token.
+ */
+function addonSegments(abs: string): string[] {
+  let dir = path.dirname(abs);
+  for (let i = 0; i < 12 && dir !== path.dirname(dir); i++, dir = path.dirname(dir)) {
+    if (existsSync(path.join(dir, "__manifest__.py"))) {
+      return path.relative(dir, abs).split(path.sep);
+    }
+  }
   const segs = abs.split(path.sep);
+  const idx = segs.lastIndexOf("addons");
+  if (idx >= 0 && idx + 2 < segs.length) return segs.slice(idx + 2);
+  return [path.basename(abs)];
+}
+
+/** Which skill governs this file, or undefined when it is not covered code. */
+function skillFor(rel: string[], abs: string): string | undefined {
   const ext = path.extname(abs).toLowerCase();
-  const staticIdx = segs.lastIndexOf("static");
-  if (staticIdx >= 0) {
-    // static/src and static/tests are code; static/lib, description, img are not ours.
-    if (!["src", "tests"].includes(segs[staticIdx + 1] ?? "")) return undefined;
+  if (rel[0] === "static") {
+    if (!["src", "tests"].includes(rel[1] ?? "")) return undefined;
     return [".js", ".ts", ".xml", ".scss", ".css"].includes(ext) ? WEB_SKILL : undefined;
   }
   return [".py", ".xml", ".csv"].includes(ext) ? CODE_SKILL : undefined;
@@ -100,25 +115,49 @@ function parseIndex(skill: string): IndexRow[] {
   return rows;
 }
 
-/** Does a backticked path token from a row's "Read it when" text name the edited file? */
-function rowMatches(row: IndexRow, abs: string): boolean {
-  const segs = abs.split(path.sep);
-  const base = path.basename(abs);
+const TYPE_CUES: [RegExp, string[]][] = [
+  [/\bpython\b/, [".py"]],
+  [/\bxml\b/, [".xml"]],
+  [/\bcsv\b/, [".csv"]],
+  [/\bscss\b/, [".scss"]],
+  [/\bcss\b/, [".css"]],
+  [/\b(javascript|js)\b/, [".js", ".ts"]],
+];
+
+/**
+ * Does a row's "Read it when" text name the edited file? Two signals only:
+ *  - a backticked path token: `dir/` (a directory inside the addon, at any depth),
+ *    `*.ext` (extension glob), `name.ext` or `dir/name.ext` (exact file). Tokens that are
+ *    not paths (`@route`, `search*`, `try`/`except`) are ignored.
+ *  - a file-type word in the plain text ("Python", "XML", "SCSS", "JavaScript") that names
+ *    the extension of the edited file, so "writing Python anywhere in an addon" or "any XML
+ *    records" apply to every file of that type.
+ * Rows about an activity (computes, field definitions, ...) cannot be matched to a path;
+ * for those the agent picks from the index.
+ */
+function rowMatches(row: IndexRow, rel: string[]): boolean {
+  const base = rel[rel.length - 1];
+  const ext = path.extname(base).toLowerCase();
+  const dirPath = "/" + rel.slice(0, -1).join("/") + "/";
+  const relPath = rel.join("/");
   for (const t of row.when.matchAll(/`([^`]+)`/g)) {
     const token = t[1].trim();
     if (!token || token.startsWith("@") || /\s/.test(token)) continue;
     if (token.endsWith("/")) {
-      if (segs.includes(token.slice(0, -1))) return true; // `tests/`, `views/`
+      if (dirPath.includes("/" + token)) return true;
+    } else if (token.startsWith("*.")) {
+      const glob = new RegExp("^" + token.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$");
+      if (glob.test(base)) return true;
     } else if (token.includes("*")) {
-      const glob = new RegExp(
-        "^" + token.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$",
-      );
-      if (glob.test(base)) return true; // `*.scss`
+      continue;
+    } else if (token.includes("/")) {
+      if (relPath === token || relPath.endsWith("/" + token)) return true;
     } else if (token.includes(".")) {
-      if (base === token) return true; // `__manifest__.py`, `ir.access.csv`
+      if (base === token) return true;
     }
   }
-  return false;
+  const text = row.when.replace(/`[^`]*`/g, " ").toLowerCase();
+  return TYPE_CUES.some(([re, exts]) => re.test(text) && exts.includes(ext));
 }
 
 /**
@@ -174,13 +213,14 @@ export default function (pi: ExtensionAPI) {
     if (!raw) return undefined;
     const abs = expand(raw, ctx.cwd);
     if (!isAddonFile(abs)) return undefined;
-    const skill = skillFor(abs);
+    const rel = addonSegments(abs);
+    const skill = skillFor(rel, abs);
     if (!skill) return undefined;
     const skillMd = path.join(SKILLS_DIR, skill, "SKILL.md");
     if (!existsSync(skillMd)) return undefined; // fail open
 
     const rows = parseIndex(skill);
-    const matched = [...new Set(rows.filter((r) => rowMatches(r, abs)).map((r) => r.file))];
+    const matched = [...new Set(rows.filter((r) => rowMatches(r, rel)).map((r) => r.file))];
     const guidelinesDir = path.join(SKILLS_DIR, skill, "guidelines") + path.sep;
     const anyGuideline = [...loaded].some((f) => f.startsWith(guidelinesDir));
 
