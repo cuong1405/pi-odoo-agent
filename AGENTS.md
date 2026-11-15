@@ -214,10 +214,11 @@ Time is not a constraint, thoroughness is: spend it on verification, not on aski
 ### Do not stop to ask
 - Resolve ambiguity yourself: pick the interpretation closest to the stated requirement and
   Odoo conventions (skills, then 20.0 source), and record it under **Assumptions** in the
-  progress file. Ask the human only for something that cannot be resolved from the task,
-  the code or the source (missing credentials, contradictory requirements, destructive
-  action on `pouet`). Say precisely what blocks you and what you already tried.
-- Never ask "should I continue?" or request approval for routine steps.
+  progress file. Never ask the human questions or request approval: you cannot hand the
+  turn back, and the human checks in on the session themselves.
+- If something truly blocks a requirement (missing credentials, contradictory requirements),
+  mark its row `blocked` with exactly what blocks you and what you tried, try another
+  approach, and keep working on the other rows. Never act on `pouet` to get around it.
 
 ### Requirement ledger (first step of every task)
 Before writing code, split the task into numbered atomic requirements, each tagged
@@ -239,8 +240,8 @@ The `require-done-gate` extension sends you back to work if you try to stop afte
 code while any of these fail: the ledger has a MUST row not `verified` or under 90% rows
 `verified`; no green full-module run (`--test-tags '/<module>'`, fresh log, N > 0) happened
 after your last edit; `git status` is not clean (commit intended changes, delete strays and
-any leftover deliberate break). Fix what it lists. If only the human can unblock you, add a
-line `NEEDS-HUMAN: <what blocks you, what you tried>` to the progress file and stop.
+any leftover deliberate break). Fix what it lists. There is no way to hand the turn back
+early: keep working until the checks pass.
 
 It cannot check the rest, so you also must have:
 1. A fresh install on a new test DB (`-i <module> --without-demo`) and a `-u` on a DB that

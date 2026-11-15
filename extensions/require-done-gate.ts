@@ -16,10 +16,10 @@
  * The gate only applies once the agent has edited code in this session, so questions and
  * read-only work are never held. If a check fails, the agent is sent back to work with the
  * exact reason (it cannot just reply). There is deliberately NO retry cap: the agent keeps
- * working until the checks pass. The only way out is a line `NEEDS-HUMAN: <reason>` in the
- * progress file (a genuine blocker only the human can resolve), or the human interrupting
- * the session. A wrong check therefore loops until someone looks, so each nudge is shown
- * in the session (display: true) with the exact failing checks.
+ * working until the checks pass. There is no escape hatch the agent can use: the only way
+ * out is the human interrupting the session. A wrong check therefore loops until someone
+ * looks, so each nudge is shown in the session (display: true) with the exact failing
+ * checks.
  *
  * The ledger is written by the agent, so check 1 only catches laziness; checks 2 and 3 read
  * the log and git directly. Everything resets on `session_start`.
@@ -64,7 +64,6 @@ function isCodeEdit(abs: string): boolean {
 interface Ledger {
   file: string;
   rows: { id: string; kind: "MUST" | "SHOULD"; status: string }[];
-  needsHuman: boolean;
 }
 
 function newestProgressFile(): string | undefined {
@@ -90,7 +89,7 @@ const plain = (s: string) => s.replace(/[`*_]/g, "").trim().toLowerCase();
 /** Parse the first table whose header has a MUST/SHOULD column and a Status column. */
 function parseLedger(file: string): Ledger {
   const text = readFileSync(file, "utf8");
-  const ledger: Ledger = { file, rows: [], needsHuman: /^\s*NEEDS-HUMAN:/m.test(text) };
+  const ledger: Ledger = { file, rows: [] };
   let kindCol = -1;
   let statusCol = -1;
   let idCol = 0;
@@ -253,7 +252,6 @@ export default function (pi: ExtensionAPI) {
 
     const problems: string[] = [];
     const file = newestProgressFile();
-    let needsHuman = false;
 
     // 1. Ledger
     if (!file) {
@@ -263,7 +261,6 @@ export default function (pi: ExtensionAPI) {
       );
     } else {
       const ledger = parseLedger(file);
-      needsHuman = ledger.needsHuman;
       if (ledger.rows.length === 0) {
         problems.push(
           `${file} has no requirement rows (a table with MUST/SHOULD and Status columns).`,
@@ -321,15 +318,13 @@ export default function (pi: ExtensionAPI) {
       nudges = 0;
       return undefined;
     }
-    if (needsHuman) return undefined; // agent declared a blocker for the human
     nudges++;
 
     const content =
       `You are not done yet (check #${nudges}). Checks that failed:\n` +
       problems.map((p, i) => `${i + 1}. ${p}`).join("\n") +
-      `\nFix them and continue. Do not report completion until they pass. If you are ` +
-      `genuinely blocked on something only the human can resolve, add a line ` +
-      `\`NEEDS-HUMAN: <what blocks you and what you tried>\` to the progress file and stop.`;
+      `\nFix them and continue. Do not report completion until they pass. If a row is ` +
+      `blocked, record why on the row, try another approach, and keep working on the rest.`;
     return {
       entries: [
         ...event.entries,
