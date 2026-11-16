@@ -224,13 +224,14 @@ Time is not a constraint, thoroughness is: spend it on verification, not on aski
 When you try to finish after editing code, the `require-review-gate` extension holds the
 turn open until you have reviewed your own work and fixed what the review found:
 1. Open the `odoo-review` skill's `SKILL.md` with the `read` tool again (even if you read it
-   before) and follow its Process on the module you changed. In the merits pass also re-read
-   the original task text and run the module's tests: a requirement that is
-   missing, wrong or untested is a finding.
-2. Write the report to `~/src/odoo/log/<task>_review.md` as the extension's message tells
-   you: a header with the pinned HEAD and base commits, a findings table
-   (`# | File:line | Defect | Failure scenario | Fix | Guideline section or *judgement* | Status`),
-   and a closing `Guidelines read:` line. With no findings, write `No findings.`.
+   before) and follow **all** of its instructions strictly, every section and not only its
+   numbered process: the sibling house-rule skills it points to are the floor, then the
+   merits pass, and so on. Also check the work against the original task text and run the
+   module's tests: a requirement that is missing, wrong or untested is a finding.
+2. Write the report to `~/src/odoo/log/<task>_review.md` in the skill's report format, with
+   the findings in the table the extension's message gives you
+   (`# | File:line | Defect | Failure scenario | Fix | Guideline section or *judgement* | Status`)
+   and the skill's closing `Guidelines read:` line. With no findings, write `No findings.`.
 3. Fix the findings (the test that would have caught each one, red first; commit) and set
    their Status to `fixed`. Leave an ambiguous one `flagged` with the reason. At least 90% of
    the findings must be `fixed`; the extension re-checks every time you try to finish and

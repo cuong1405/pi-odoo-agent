@@ -9,10 +9,11 @@
  *  1. When the agent tries to finish (after it edited code in this session), it is sent
  *     to review its own work: load the odoo-review skill NOW (a fresh read of its SKILL.md
  *     after this request, even if it was read earlier and nothing was compacted), follow
- *     that skill's Process, and write the report to `<log dir>/<task>_review.md` in the
- *     skill's report format: a header with the pinned HEAD and base commits, a findings
- *     table (File:line, Defect, Failure scenario, Fix, Guideline section or *judgement*,
- *     Status) and a closing `Guidelines read:` line. The review must also check the
+ *     ALL of that skill's instructions strictly (nothing of the skill is restated or
+ *     hard-coded here), and write the report to `<log dir>/<task>_review.md` in the
+ *     skill's report format. The findings go in a table the extension can read (File:line,
+ *     Defect, Failure scenario, Fix, Guideline section or *judgement*, Status) and the
+ *     skill's closing `Guidelines read:` line stays. The review must also check the
  *     original task text, so a requirement gap is a finding.
  *  2. Each later attempt to finish checks: the skill was read after the request, a report
  *     written after the request exists, it has the closing line, and at least 90% of its
@@ -140,19 +141,18 @@ export function parseReview(file: string): Review {
 const REVIEW_REQUEST =
   `You are about to finish, so review your own work first (this is the last step):\n` +
   `   a. Load the review skill now: open ${REVIEW_SKILL_MD} with the read tool (even if you ` +
-  `read it earlier), then follow its Process for the module you changed: scope (pin HEAD ` +
-  `and the base commit the task started from; take the diff from the checkout), map every ` +
-  `changed file to its guideline sections, read them, rules pass, merits pass. In the ` +
-  `merits pass also re-read the original task text and run the module's tests; a ` +
-  `requirement that is missing, wrong or untested is a finding (section: *judgement*).\n` +
-  `   b. Write the report to ${LOG_DIR}/<task>_review.md in the skill's report format: a ` +
-  `header with the pinned HEAD and base commits, then a findings table with exactly these ` +
-  `columns\n` +
+  `read it earlier) and follow ALL of its instructions strictly, every section and not only ` +
+  `its numbered process, for the module you changed. Work from the skill itself, not from ` +
+  `memory or from this message.\n` +
+  `   b. Also check the work against the original task text: a requirement that is missing, ` +
+  `wrong or untested is a finding (section: *judgement*).\n` +
+  `   c. Write the report to ${LOG_DIR}/<task>_review.md in the skill's report format. So ` +
+  `that this gate can read it, put the findings in a table with exactly these columns ` +
+  `(the skill's finding fields plus Status)\n` +
   `      | # | File:line | Defect | Failure scenario | Fix | Guideline section or *judgement* | Status |\n` +
-  `      one row per finding (Status starts as \`open\`), then a closing line ` +
-  `\`Guidelines read: <every section you opened>\`. With no findings, write \`No findings.\` ` +
-  `instead of the table.\n` +
-  `   c. Fix every finding you can (add the test that would have caught it, red first; ` +
+  `      one row per finding (Status starts as \`open\`), and keep the skill's closing ` +
+  `\`Guidelines read:\` line. With no findings, write \`No findings.\` instead of the table.\n` +
+  `   d. Fix every finding you can (add the test that would have caught it, red first; ` +
   `commit), set its Status to \`fixed\` (commit or test in the Fix cell), and leave an ` +
   `ambiguous one as \`flagged\` with the reason in its Fix cell. At least ` +
   `${MIN_FIXED_RATIO * 100}% of the findings must be \`fixed\` before you may finish.`;
