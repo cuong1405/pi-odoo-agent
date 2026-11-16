@@ -16,15 +16,17 @@
  * Flow, for EVERY `edit` / `write` of an addon code file (all the edits and writes of one
  * assistant message count as one batch and share one walk):
  *  1. The edit is blocked. The block message gives the file path, the intended change (the
- *     edit's replacement texts, or the start of the written content) and ROW 1 of the
- *     skill's index: title, "Read it when", guideline file.
- *  2. The agent answers with the `guideline_row` tool, one call per row (`apply: true` when
- *     the row's "Read it when" matches the edit or the task at hand, else `false`). Each
- *     result shows the next row. Applying rows are put in a queue.
- *  3. After the last row the tool result lists the queue. The agent must read every queued
- *     guideline file AFTER that point (any tool: `read`, or bash `cat`/`head`/`sed`...), even
- *     if it read it before: an earlier read may have covered another section. An empty queue
- *     is refused and the walk restarts: some row always applies to addon code.
+ *     edit's replacement texts, or the start of the written content) and EVERY row of the
+ *     skill's index as a separate numbered item: title, "Read it when", guideline file.
+ *  2. The agent answers with ONE `guideline_rows` call, like the edit tool takes an array
+ *     of edits: one entry per row, each `{ row, apply, why }` (`apply: true` when the row's
+ *     "Read it when" matches the edit or the task at hand, else `false`; `why` says in a few
+ *     words what matched or why not). The call is rejected, with the list of problems, when
+ *     a row is missing, repeated or unknown, when a `why` is empty, or when no row applies
+ *     (some row always applies to addon code). Nothing is accepted partially.
+ *  3. Applying rows are put in a queue. The agent must read every queued guideline file AFTER
+ *     that point (any tool: `read`, or bash `cat`/`head`/`sed`...), even if it read it
+ *     before: an earlier read may have covered another section.
  *  4. Repeating the edit passes once every queued file was read after the walk finished, and
  *     so does every other edit/write of the same assistant message. The next turn's edit or
  *     write starts a new walk. (If an edit that passed fails, say because its old text was
@@ -178,25 +180,25 @@ function intendedChange(toolName: string, input: Record<string, unknown>): strin
 
 interface Walk {
   rows: IndexRow[];
-  cursor: number;
   queue: Set<string>;
   doneSeq: number; // 0 until the walk finished; queued files must be read after this
   grantUntil: number; // -1 until an edit passed; edits of turns <= this need no new walk
 }
 
-const rowText = (walk: Walk) => {
-  const row = walk.rows[walk.cursor];
-  return (
-    `Row ${walk.cursor + 1}/${walk.rows.length}: ${row.title}\n` +
-    `  Read it when: ${row.when}\n` +
-    `  Guideline file: ${row.file}`
-  );
-};
+const rowsText = (walk: Walk) =>
+  walk.rows
+    .map(
+      (row, i) =>
+        `Row ${i + 1}: ${row.title}\n  Read it when: ${row.when}\n  Guideline file: ${row.file}`,
+    )
+    .join("\n\n");
 
 const HOW_TO_ANSWER =
-  `Answer with the guideline_row tool, one call per row and one row at a time: ` +
-  `apply=true when the row's "Read it when" matches this edit or the task you are working ` +
-  `on, apply=false otherwise. Do not answer ahead; each result shows the next row.`;
+  `Answer with ONE guideline_rows call whose rows array has one entry per row below: ` +
+  `{ row: <number>, apply: true|false, why: <a few words> }. apply=true when the row's ` +
+  `"Read it when" matches this edit or the task you are working on, apply=false otherwise; ` +
+  `why says what matched, or why the row does not apply. Every row needs its own entry, and ` +
+  `at least one row applies to any edit of addon code.`;
 
 const FRESH =
   `Every edit or write of addon code needs a fresh walk of the guideline index and a fresh ` +
@@ -210,7 +212,7 @@ export default function (pi: ExtensionAPI) {
   const readSeq = new Map<string, number>(); // skill file -> seq of its latest read
   const walks = new Map<string, Walk>(); // skill -> its current walk through the index
   const blockedIds = new Set<string>(); // calls this extension blocked (not tool failures)
-  let active: string | undefined; // the skill whose row the agent is answering
+  let active: string | undefined; // the skill whose rows the agent is answering
 
   const reset = () => {
     readSeq.clear();
@@ -225,17 +227,26 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "guideline_row",
-    label: "Guideline row",
+    name: "guideline_rows",
+    label: "Guideline rows",
     description:
-      "Answer the current row of an Odoo guideline index that a blocked edit asked you to " +
-      "walk through. apply=true if the row's 'Read it when' matches your edit or the task " +
-      "you are working on, false otherwise. Only usable after an edit was blocked and showed " +
-      "you a row.",
+      "Answer every row of an Odoo guideline index that a blocked edit asked you to walk " +
+      "through, in one call. One entry per row: apply=true if the row's 'Read it when' " +
+      "matches your edit or the task you are working on, false otherwise, and why in a few " +
+      "words. Only usable after an edit was blocked and showed you the rows.",
     parameters: Type.Object({
-      apply: Type.Boolean({
-        description: "true when this row applies to the edit or the task, false when it does not.",
-      }),
+      rows: Type.Array(
+        Type.Object({
+          row: Type.Integer({ minimum: 1, description: "The row number shown in the block message." }),
+          apply: Type.Boolean({
+            description: "true when this row applies to the edit or the task, false when it does not.",
+          }),
+          why: Type.String({
+            description: "A few words: what in the edit or task matches the row, or why it does not apply.",
+          }),
+        }),
+        { minItems: 1 },
+      ),
     }),
     async execute(_toolCallId, params) {
       const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
@@ -243,26 +254,41 @@ export default function (pi: ExtensionAPI) {
       if (!walk || walk.doneSeq > 0) {
         return reply(
           "No guideline index is being walked. Repeat your blocked edit; its block message " +
-            "shows the first row.",
+            "shows the rows.",
         );
       }
-      if (params.apply) walk.queue.add(walk.rows[walk.cursor].file);
-      walk.cursor++;
-      if (walk.cursor < walk.rows.length) {
-        return reply(`Recorded. Queued so far: ${walk.queue.size} file(s).\n\n${rowText(walk)}`);
+      const problems: string[] = [];
+      const seen = new Set<number>();
+      for (const entry of params.rows) {
+        if (entry.row < 1 || entry.row > walk.rows.length) {
+          problems.push(`row ${entry.row} does not exist (rows are 1-${walk.rows.length})`);
+        } else if (seen.has(entry.row)) {
+          problems.push(`row ${entry.row} is answered more than once`);
+        }
+        seen.add(entry.row);
+        if (entry.why.trim().length < 3) problems.push(`row ${entry.row} has no "why"`);
       }
-      if (walk.queue.size === 0) {
-        walk.cursor = 0;
+      const missing = walk.rows.map((_, i) => i + 1).filter((n) => !seen.has(n));
+      if (missing.length) problems.push(`no entry for row(s) ${missing.join(", ")}`);
+      if (problems.length === 0 && !params.rows.some((e) => e.apply)) {
+        problems.push(
+          `no row applies, which cannot be right for an edit of addon code (some row always ` +
+            `applies); read each "Read it when" against your edit and the task again`,
+        );
+      }
+      if (problems.length) {
         return reply(
-          `Nothing queued, which cannot be right for an edit of addon code (some row always ` +
-            `applies). Walk the index again, reading each "Read it when" against your edit ` +
-            `and the task.\n\n${rowText(walk)}`,
+          `Not accepted, nothing was recorded: ${problems.join("; ")}. Send the whole array ` +
+            `again, one entry per row.\n\n${rowsText(walk)}`,
         );
+      }
+      for (const entry of params.rows) {
+        if (entry.apply) walk.queue.add(walk.rows[entry.row - 1].file);
       }
       walk.doneSeq = ++seq;
       return reply(
-        `Index complete. Read every guideline file in your queue now (any tool, even if you ` +
-          `read it before), then repeat your edit:\n${[...walk.queue].map((f) => `- ${f}`).join("\n")}`,
+        `Accepted. Read every guideline file in your queue now (any tool, even if you read it ` +
+          `before), then repeat your edit:\n${[...walk.queue].map((f) => `- ${f}`).join("\n")}`,
       );
     },
   });
@@ -318,7 +344,6 @@ export default function (pi: ExtensionAPI) {
     if (!walk) {
       walk = {
         rows,
-        cursor: 0,
         queue: new Set(),
         doneSeq: rows.length === 0 ? ++seq : 0, // no parsable index: any fresh guideline read
         grantUntil: -1,
@@ -339,7 +364,7 @@ export default function (pi: ExtensionAPI) {
     if (walk.doneSeq === 0) {
       return block(
         `${intro}\nWalk the ${skill} guideline index (${rows.length} rows, from its ` +
-          `SKILL.md) before this edit. ${HOW_TO_ANSWER}\n\n${rowText(walk)}`,
+          `SKILL.md) before this edit. ${HOW_TO_ANSWER}\n\n${rowsText(walk)}`,
       );
     }
     if (walk.rows.length === 0) {

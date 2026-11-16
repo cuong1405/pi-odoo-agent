@@ -16,14 +16,15 @@ A `SKILL.md` is only an index; the rules are in the `guidelines/*.md` files it l
   files a moment ago: an earlier read may have covered a different section. All the edits
   and writes you send in one message share one walk; the next message's edit needs a new
   one (a retry of an edit that failed does not). You never open `SKILL.md`. The block message
-  gives the file's path, your intended change and **row 1** of the index (title, "Read it
-  when", guideline file). Answer with the `guideline_row` tool, **one call per row, one row
-  at a time**: `apply=true` when the row's "Read it when" matches this edit or the task you
-  are working on (what the code does, not only which file it is), `apply=false` otherwise;
-  each result shows the next row. After the last row, read every guideline file you queued
-  (any tool, again even if read before), then repeat the edit. Do not answer rows ahead of
-  time, and do not answer all `false`: some row always applies to addon code. `static/` code
-  uses `odoo-web-guidelines`, which has its own walk.
+  gives the file's path, your intended change and **every row** of the index as a separate
+  item (number, title, "Read it when", guideline file). Answer with **one** `guideline_rows`
+  call whose `rows` array has an entry for every row: `{row, apply, why}`, `apply=true` when
+  the row's "Read it when" matches this edit or the task you are working on (what the code
+  does, not only which file it is), `apply=false` otherwise, and `why` in a few words saying
+  what matched or why not. Missing, repeated or unknown rows, an empty `why`, or all `false`
+  are rejected, and nothing is recorded. Then read every guideline file you queued (any
+  tool, again even if read before) and repeat the edit. `static/` code uses
+  `odoo-web-guidelines`, which has its own walk.
 - Not covered by that block, so load them yourself when relevant: `odoo-security`
   (`sudo`, routes, ACLs, public methods, raw SQL), `odoo-git` (commit message, branch).
   `odoo-review` is loaded for you at the end of the task (see "Finishing: the review gate").
