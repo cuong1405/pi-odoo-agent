@@ -11,13 +11,16 @@ Skills live in `~/.pi/agent/skills/<skill>/`. Links inside a `SKILL.md` or guide
 or the addon: `tests.md` here means `~/.pi/agent/skills/odoo-guidelines/guidelines/tests.md`.
 A `SKILL.md` is only an index; the rules are in the `guidelines/*.md` files it links.
 
-- Editing an addon file is **blocked** until you have read the guideline files that cover
-  this change, and again after a context compaction. You do not need to open `SKILL.md`: the
-  block message lists the missing files and the skill's whole index (each guideline's
-  absolute path and "Read it when"). Read every guideline whose "Read it when" matches what
-  you are about to do, not just the ones listed as missing, with any tool, then repeat the
-  edit. Skills stack (Python plus tests plus XML, and so on; `static/` code uses
-  `odoo-web-guidelines`).
+- Editing an addon code file is **blocked** until you have walked the matching skill's
+  guideline index and read what applies, and again after a context compaction. You never
+  open `SKILL.md`. The block message gives the file's path, your intended change and **row 1**
+  of the index (title, "Read it when", guideline file). Answer with the `guideline_row` tool,
+  **one call per row, one row at a time**: `apply=true` when the row's "Read it when"
+  matches this edit or the task you are working on (what the code does, not only which file
+  it is), `apply=false` otherwise; each result shows the next row. After the last row, read
+  every guideline file you queued (any tool), then repeat the edit. Do not answer rows
+  ahead of time, and do not answer all `false`: some row always applies to addon code.
+  `static/` code uses `odoo-web-guidelines`, which has its own walk.
 - Not covered by that block, so load them yourself when relevant: `odoo-security`
   (`sudo`, routes, ACLs, public methods, raw SQL), `odoo-git` (commit message, branch).
   `odoo-review` is loaded for you at the end of the task (see "Finishing: the review gate").

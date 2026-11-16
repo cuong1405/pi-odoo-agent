@@ -5,26 +5,33 @@
  * itself and often does not (and `SKILL.md` is only an index, the rules live in
  * `guidelines/*.md`). Prose in AGENTS.md cannot force that, so this extension does.
  *
- * Nothing about individual guideline files is hard-coded. The only fixed facts are which
- * skill covers which kind of file (static/src and static/tests -> odoo-web-guidelines,
- * other addon code -> odoo-guidelines). Everything else is read from that skill's own
- * SKILL.md at the moment of the edit, so updating the skill updates the gate.
+ * Nothing about individual guideline files is hard-coded and the extension never matches a
+ * row to the edited file: deciding what applies is the agent's job, because many rows depend
+ * on what the code does or on the task, not on the file. The extension runs the decision as
+ * a walk through the skill's own index table (parsed from its SKILL.md at the moment of the
+ * edit, so updating the skill updates the gate). The only fixed facts are which skill covers
+ * which kind of location (static/src and static/tests -> odoo-web-guidelines, other addon
+ * code -> odoo-guidelines).
  *
- * The agent never has to open SKILL.md: the extension parses its index table and puts it in
- * the block message. Before an `edit` / `write` of an addon code file the agent must have,
- * in this session:
- *  1. read every guideline file whose index row names this kind of file (a row matches
- *     when a backticked path token in its "Read it when" text, such as `tests/`, `views/`,
- *     `__manifest__.py` or `*.scss`, matches the edited path), and
- *  2. read at least one guideline file of that skill (the agent picks it from the index
- *     when no row names the file).
- * If not, the edit is blocked and the block message lists what is missing, followed by the
- * skill's whole index table (title, absolute path, "Read it when"). Guideline files count
- * when read with the `read` tool or with bash `cat`/`head`/`sed`/... (models often use bash).
+ * Flow, per skill, once per session and again after a context compaction:
+ *  1. An `edit` / `write` of an addon code file is blocked. The block message gives the file
+ *     path, the intended change (the edit's replacement texts, or the start of the written
+ *     content) and ROW 1 of the index: title, "Read it when", guideline file.
+ *  2. The agent answers with the `guideline_row` tool, one call per row (`apply: true` when
+ *     the row's "Read it when" matches the edit or the task at hand, else `false`). Each
+ *     result shows the next row. Applying rows are put in a queue.
+ *  3. After the last row the tool result lists the queue. The agent must read every queued
+ *     guideline file (any tool: `read`, or bash `cat`/`head`/`sed`...). An empty queue is
+ *     refused and the walk restarts: some row always applies to addon code.
+ *  4. Repeating the edit passes once every queued file has been read. Until then the block
+ *     message lists the files still unread.
+ * SKILL.md itself never has to be read. If the index table cannot be parsed, the fallback is
+ * "read at least one guideline file".
  *
- * Forgets everything on `session_compact` and `session_start`. There is no retry cap: the
- * edit stays blocked until the files are read (a human stops a stuck session). The only
- * fail-open is a missing SKILL.md on disk, which means no requirement.
+ * Forgets everything on `session_compact` and `session_start`. There is no retry cap and no
+ * escape (a human stops a stuck session); the only fail-open is a skill without a SKILL.md
+ * or guidelines folder on disk. Files that are not code (docs, translations, images, fonts,
+ * json data) are never gated.
  *
  * Install: copy to ~/.pi/agent/extensions/require-skill-reads.ts and run /reload.
  * Override the skills directory with PI_SKILLS_DIR (default ~/.pi/agent/skills).
@@ -33,9 +40,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const MAX_LISTED_ROWS = 30;
 const SKILLS_DIR = path.resolve(
   process.env.PI_SKILLS_DIR || path.join(os.homedir(), ".pi", "agent", "skills"),
 );
@@ -79,14 +86,18 @@ function addonSegments(abs: string): string[] {
   return [path.basename(abs)];
 }
 
+const NOT_CODE = new Set([
+  ".md", ".po", ".pot", ".json", ".txt", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
+  ".webp", ".woff", ".woff2", ".ttf", ".otf", ".eot", ".pdf", ".zip",
+]);
+
 /** Which skill governs this file, or undefined when it is not covered code. */
 function skillFor(rel: string[], abs: string): string | undefined {
-  const ext = path.extname(abs).toLowerCase();
+  if (NOT_CODE.has(path.extname(abs).toLowerCase())) return undefined;
   if (rel[0] === "static") {
-    if (!["src", "tests"].includes(rel[1] ?? "")) return undefined;
-    return [".js", ".ts", ".xml", ".scss", ".css"].includes(ext) ? WEB_SKILL : undefined;
+    return ["src", "tests"].includes(rel[1] ?? "") ? WEB_SKILL : undefined;
   }
-  return [".py", ".xml", ".csv"].includes(ext) ? CODE_SKILL : undefined;
+  return CODE_SKILL;
 }
 
 interface IndexRow {
@@ -115,51 +126,6 @@ function parseIndex(skill: string): IndexRow[] {
   return rows;
 }
 
-const TYPE_CUES: [RegExp, string[]][] = [
-  [/\bpython\b/, [".py"]],
-  [/\bxml\b/, [".xml"]],
-  [/\bcsv\b/, [".csv"]],
-  [/\bscss\b/, [".scss"]],
-  [/\bcss\b/, [".css"]],
-  [/\b(javascript|js)\b/, [".js", ".ts"]],
-];
-
-/**
- * Does a row's "Read it when" text name the edited file? Two signals only:
- *  - a backticked path token: `dir/` (a directory inside the addon, at any depth),
- *    `*.ext` (extension glob), `name.ext` or `dir/name.ext` (exact file). Tokens that are
- *    not paths (`@route`, `search*`, `try`/`except`) are ignored.
- *  - a file-type word in the plain text ("Python", "XML", "SCSS", "JavaScript") that names
- *    the extension of the edited file, so "writing Python anywhere in an addon" or "any XML
- *    records" apply to every file of that type.
- * Rows about an activity (computes, field definitions, ...) cannot be matched to a path;
- * for those the agent picks from the index.
- */
-function rowMatches(row: IndexRow, rel: string[]): boolean {
-  const base = rel[rel.length - 1];
-  const ext = path.extname(base).toLowerCase();
-  const dirPath = "/" + rel.slice(0, -1).join("/") + "/";
-  const relPath = rel.join("/");
-  for (const t of row.when.matchAll(/`([^`]+)`/g)) {
-    const token = t[1].trim();
-    if (!token || token.startsWith("@") || /\s/.test(token)) continue;
-    if (token.endsWith("/")) {
-      if (dirPath.includes("/" + token)) return true;
-    } else if (token.startsWith("*.")) {
-      const glob = new RegExp("^" + token.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$");
-      if (glob.test(base)) return true;
-    } else if (token.includes("*")) {
-      continue;
-    } else if (token.includes("/")) {
-      if (relPath === token || relPath.endsWith("/" + token)) return true;
-    } else if (token.includes(".")) {
-      if (base === token) return true;
-    }
-  }
-  const text = row.when.replace(/`[^`]*`/g, " ").toLowerCase();
-  return TYPE_CUES.some(([re, exts]) => re.test(text) && exts.includes(ext));
-}
-
 /**
  * Models often read skill files with `cat`/`head`/`sed` in bash instead of the read tool.
  * Count a skill .md file as read when a reader command names it (a listing or grep is not).
@@ -180,14 +146,107 @@ function inputPath(input: Record<string, unknown>): string | undefined {
   return typeof raw === "string" && raw ? raw : undefined;
 }
 
+const clip = (text: string, max: number) =>
+  text.length > max ? `${text.slice(0, max)}\n... (${text.length - max} more characters)` : text;
+
+/** The intended change, as far as the tool input shows it (empty when it shows nothing). */
+function intendedChange(toolName: string, input: Record<string, unknown>): string {
+  const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+  if (toolName === "write") {
+    const content = str(input.content);
+    return content ? `Writes the whole file, starting with:\n${clip(content, 2000)}` : "";
+  }
+  const items: unknown[] = Array.isArray(input.edits) ? input.edits : [input];
+  const parts: string[] = [];
+  for (const item of items.slice(0, 5)) {
+    const e = (item ?? {}) as Record<string, unknown>;
+    const from = str(e.oldText) ?? str(e.oldString);
+    const to = str(e.newText) ?? str(e.newString);
+    if (to === undefined) continue;
+    parts.push(
+      (from ? `Replaces:\n${clip(from, 400)}\nwith:\n` : `Inserts:\n`) + clip(to, 800),
+    );
+  }
+  if (items.length > 5) parts.push(`... (+${items.length - 5} more edits)`);
+  return parts.join("\n\n");
+}
+
+interface Walk {
+  rows: IndexRow[];
+  cursor: number;
+  queue: Set<string>;
+  done: boolean;
+}
+
+const rowText = (walk: Walk) => {
+  const row = walk.rows[walk.cursor];
+  return (
+    `Row ${walk.cursor + 1}/${walk.rows.length}: ${row.title}\n` +
+    `  Read it when: ${row.when}\n` +
+    `  Guideline file: ${row.file}`
+  );
+};
+
+const HOW_TO_ANSWER =
+  `Answer with the guideline_row tool, one call per row and one row at a time: ` +
+  `apply=true when the row's "Read it when" matches this edit or the task you are working ` +
+  `on, apply=false otherwise. Do not answer ahead; each result shows the next row.`;
+
 export default function (pi: ExtensionAPI) {
   const loaded = new Set<string>(); // absolute paths of skill files read this session
+  const walks = new Map<string, Walk>(); // skill -> its walk through the index
+  let active: string | undefined; // the skill whose row the agent is answering
 
   const reset = () => {
     loaded.clear();
+    walks.clear();
+    active = undefined;
   };
   pi.on("session_start", reset);
   pi.on("session_compact", reset);
+
+  pi.registerTool({
+    name: "guideline_row",
+    label: "Guideline row",
+    description:
+      "Answer the current row of an Odoo guideline index that a blocked edit asked you to " +
+      "walk through. apply=true if the row's 'Read it when' matches your edit or the task " +
+      "you are working on, false otherwise. Only usable after an edit was blocked and showed " +
+      "you a row.",
+    parameters: Type.Object({
+      apply: Type.Boolean({
+        description: "true when this row applies to the edit or the task, false when it does not.",
+      }),
+    }),
+    async execute(_toolCallId, params) {
+      const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
+      const walk = active ? walks.get(active) : undefined;
+      if (!walk || walk.done) {
+        return reply(
+          "No guideline index is being walked. Repeat your blocked edit; its block message " +
+            "shows the first row.",
+        );
+      }
+      if (params.apply) walk.queue.add(walk.rows[walk.cursor].file);
+      walk.cursor++;
+      if (walk.cursor < walk.rows.length) {
+        return reply(`Recorded. Queued so far: ${walk.queue.size} file(s).\n\n${rowText(walk)}`);
+      }
+      if (walk.queue.size === 0) {
+        walk.cursor = 0;
+        return reply(
+          `Nothing queued, which cannot be right for an edit of addon code (some row always ` +
+            `applies). Walk the index again, reading each "Read it when" against your edit ` +
+            `and the task.\n\n${rowText(walk)}`,
+        );
+      }
+      walk.done = true;
+      return reply(
+        `Index complete. Read every guideline file in your queue now (any tool), then repeat ` +
+          `your edit:\n${[...walk.queue].map((f) => `- ${f}`).join("\n")}`,
+      );
+    },
+  });
 
   pi.on("tool_call", async (event, ctx) => {
     // Record reads when the call STARTS (not when it finishes): sibling calls of one
@@ -203,8 +262,7 @@ export default function (pi: ExtensionAPI) {
     }
     if (event.toolName === "bash") {
       const command = String((event.input as { command?: unknown }).command ?? "");
-      const files = skillFilesReadBy(command, ctx.cwd);
-      for (const abs of files) loaded.add(abs);
+      for (const abs of skillFilesReadBy(command, ctx.cwd)) loaded.add(abs);
       return undefined;
     }
     if (event.toolName !== "edit" && event.toolName !== "write") return undefined;
@@ -218,45 +276,47 @@ export default function (pi: ExtensionAPI) {
     if (!skill) return undefined;
     const skillMd = path.join(SKILLS_DIR, skill, "SKILL.md");
     if (!existsSync(skillMd)) return undefined; // fail open
+    const guidelinesDir = path.join(SKILLS_DIR, skill, "guidelines") + path.sep;
+    if (!existsSync(guidelinesDir)) return undefined; // fail open
 
     const rows = parseIndex(skill);
-    const matched = [...new Set(rows.filter((r) => rowMatches(r, rel)).map((r) => r.file))];
-    const guidelinesDir = path.join(SKILLS_DIR, skill, "guidelines") + path.sep;
-    const anyGuideline = [...loaded].some((f) => f.startsWith(guidelinesDir));
+    const change = intendedChange(event.toolName, event.input as Record<string, unknown>);
+    const intro =
+      `Blocked: read the Odoo guidelines before editing ${abs}.\n` +
+      (change ? `\nIntended change:\n${change}\n` : "");
 
-    const missing: string[] = [];
-    for (const file of matched) {
-      if (loaded.has(file)) continue;
-      const row = rows.find((r) => r.file === file)!;
-      missing.push(`${file}  (${row.title}: ${row.when})`);
+    if (rows.length === 0) {
+      if ([...loaded].some((f) => f.startsWith(guidelinesDir))) return undefined;
+      return {
+        block: true,
+        reason:
+          `${intro}\nRead at least one guideline file in ${guidelinesDir} that covers your ` +
+          `change (any tool), then repeat the edit.`,
+      };
     }
-    const needPick = matched.length === 0 && !anyGuideline;
-    if (missing.length === 0 && !needPick) return undefined;
 
-    let reason = `Blocked: load the Odoo guidelines for this file before editing ${abs}.\n`;
-    if (missing.length) {
-      reason += `Read these first (any tool), then repeat the edit:\n`;
-      reason += missing.map((line) => `- ${line}`).join("\n") + "\n";
+    let walk = walks.get(skill);
+    if (!walk) {
+      walk = { rows, cursor: 0, queue: new Set(), done: false };
+      walks.set(skill, walk);
     }
-    if (needPick) {
-      reason +=
-        `No index row names this file type: also read at least one guideline file from the ` +
-        `index below that covers your change.\n`;
+    active = skill;
+
+    if (!walk.done) {
+      return {
+        block: true,
+        reason:
+          `${intro}\nWalk the ${skill} guideline index (${rows.length} rows, from its ` +
+          `SKILL.md) before this edit. ${HOW_TO_ANSWER}\n\n${rowText(walk)}`,
+      };
     }
-    const byFile = new Map<string, string[]>();
-    for (const row of rows) {
-      byFile.set(row.file, [...(byFile.get(row.file) ?? []), `${row.title}: ${row.when}`]);
-    }
-    if (byFile.size) {
-      reason += `\nIndex of ${skill} (from its SKILL.md; paths are absolute; read every file whose "Read it when" matches what you are about to change):\n`;
-      for (const [file, topics] of [...byFile].slice(0, MAX_LISTED_ROWS)) {
-        const mark = loaded.has(file) ? " [already read]" : "";
-        reason += `- ${file}${mark}\n    ${topics.join("\n    ")}\n`;
-      }
-    }
-    reason +=
-      `\nThe rules are in the guideline files above, not in this index. They must be read ` +
-      `again after a context reset or compaction.`;
-    return { block: true, reason };
+    const unread = [...walk.queue].filter((f) => !loaded.has(f));
+    if (unread.length === 0) return undefined;
+    return {
+      block: true,
+      reason:
+        `${intro}\nYou queued these guideline files for this edit; read each one (any tool), ` +
+        `then repeat the edit:\n${unread.map((f) => `- ${f}`).join("\n")}`,
+    };
   });
 }
