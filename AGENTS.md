@@ -238,7 +238,10 @@ requirements file was missing and the work was not reviewed, and stop.
 
 ### Finishing: the review gate
 When you try to finish after editing code, the `require-review-gate` extension holds the
-turn open until you have reviewed your own work and fixed what the review found:
+turn open until you have reviewed your own work and fixed what the review found. Each of its
+messages arrives right after a compaction of the session, so re-read your requirements file
+and the report from disk. There is no time limit and no missing infrastructure: everything
+you need is described in this file, so never report either as a blocker.
 1. Open the `odoo-review` skill's `SKILL.md` with the `read` tool again (even if you read it
    before) and follow **all** of its instructions strictly, every section and not only its
    numbered process: the sibling house-rule skills it points to are the floor, then the

@@ -32,6 +32,14 @@
  *       repo and is reachable from HEAD (a finding with no real commit is not fixed).
  *     Otherwise the agent goes back to fix the open items and update the report.
  *
+ * Every message that sends the agent back (the review request and each "not done yet") is
+ * delivered after a compaction of the session. A long session fills the context, and a model
+ * working from a bloated context tends to give up and blame a time limit or missing
+ * infrastructure that do not exist. The gate lets the agent settle, compacts (`ctx.compact`,
+ * from `agent_settled`), then sends the message as a custom message that starts a new turn
+ * (that does not count as a user prompt, so it does not restart the review stage). If the
+ * compaction fails or has nothing to do, the message is sent anyway.
+ *
  * The report is a file (not conversation text) so the extension can check its time and
  * format, and the agent can re-read it after a compaction. A review with no findings says
  * `No findings.` instead of the table.
@@ -60,6 +68,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const MIN_FIXED_RATIO = 0.9;
 const MIN_MET_RATIO = 0.9;
 const MAX_IDLE_RUNS = 3;
+const COMPACT_INSTRUCTIONS =
+  "Checkpoint before a review of the finished work. Keep: the task and its requirements " +
+  "file path (<task>_requirements.md) and Base commit, every file changed and commit made, " +
+  "the commands and tests run with their results, and every problem still open. Drop " +
+  "exploration and long tool output. Do not record a time limit, an effort limit or missing " +
+  "infrastructure as a constraint: there is none, and the environment is described in " +
+  "AGENTS.md.";
 const LOG_DIR = path.resolve(
   process.env.ODOO_LOG_DIR || path.join(os.homedir(), "src", "odoo", "log"),
 );
@@ -444,6 +459,7 @@ export default function (pi: ExtensionAPI) {
   let missingReported = false;
   let lastAnyEdit = 0; // any edit/write call, whatever the file (the report counts)
   let editSnapshot = -1; // lastAnyEdit at the previous gate run; -1 = no run yet
+  let outbox: { content: string; isRequest: boolean } | undefined; // sent after a compaction
   let idleRuns = 0; // consecutive gate runs with no edit/write call in between
   const skillReads = new Map<string, number>(); // abs path of skill .md -> seq when opened
   const editedDirs = new Set<string>();
@@ -453,6 +469,7 @@ export default function (pi: ExtensionAPI) {
     missingReported = false;
     editSnapshot = -1;
     idleRuns = 0;
+    outbox = undefined;
   };
   pi.on("session_start", () => {
     seq = lastEdit = lastAnyEdit = 0;
@@ -527,9 +544,8 @@ export default function (pi: ExtensionAPI) {
     }
 
     let problems: string[];
-    if (requestSeq === 0) {
-      requestSeq = ++seq;
-      requestTime = Date.now();
+    const isRequest = requestSeq === 0;
+    if (isRequest) {
       problems = [reviewRequest(requirementsFile)];
     } else {
       const roots = new Set<string>();
@@ -572,12 +588,38 @@ export default function (pi: ExtensionAPI) {
       problems.map((p, i) => `${i + 1}. ${p}`).join("\n") +
       `\nDo not report completion until the review bar is met. If something blocks you, ` +
       `record it in the report, try another approach, and keep working on the rest.`;
-    return {
-      entries: [
-        ...event.entries,
-        { type: "custom_message", customType: "review-gate", content, display: true },
-      ],
-      continue: true,
+    outbox = { content, isRequest };
+    return undefined;
+  });
+
+  pi.on("agent_settled", async (event, ctx) => {
+    const msg = outbox;
+    outbox = undefined;
+    if (!msg || event.aborted) return;
+    let sent = false;
+    const send = () => {
+      if (sent) return;
+      sent = true;
+      if (msg.isRequest) {
+        requestSeq = ++seq;
+        requestTime = Date.now();
+      }
+      pi.sendMessage(
+        { customType: "review-gate", content: msg.content, display: true },
+        { triggerTurn: true },
+      );
     };
+    try {
+      ctx.compact({
+        customInstructions: COMPACT_INSTRUCTIONS,
+        onComplete: send,
+        onError: (error: Error) => {
+          ctx.ui?.notify?.(`require-review-gate: compaction skipped (${error.message})`, "warning");
+          send();
+        },
+      });
+    } catch {
+      send();
+    }
   });
 }
