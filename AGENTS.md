@@ -233,16 +233,25 @@ turn open until you have reviewed your own work and fixed what the review found:
 1. Open the `odoo-review` skill's `SKILL.md` with the `read` tool again (even if you read it
    before) and follow **all** of its instructions strictly, every section and not only its
    numbered process: the sibling house-rule skills it points to are the floor, then the
-   merits pass, and so on. Also check the work against your requirements file and run the
-   module's tests: a requirement that is missing, wrong or untested is a finding.
-2. Write the report to `~/src/odoo/log/<task>_review.md` in the skill's report format, with
-   the findings in the table the extension's message gives you
-   (`# | File:line | Defect | Failure scenario | Fix | Guideline section or *judgement* | Status`)
-   and the skill's closing `Guidelines read:` line. With no findings, write `No findings.`.
-3. Fix the findings (the test that would have caught each one, red first; commit) and set
-   their Status to `fixed`. Leave an ambiguous one `flagged` with the reason. At least 90% of
-   the findings must be `fixed`; the extension re-checks every time you try to finish and
-   lists what is open.
+   merits pass, and so on. Open the guideline files again for this review.
+2. Review the whole task: the `Base:` commit of your requirements file to HEAD, plus
+   uncommitted and untracked files. Every changed file must appear in the report.
+3. Check every requirement in your requirements file by running its Check now, never from
+   memory or an earlier run. The report has one row per requirement number
+   (`# | Verdict | Evidence`): `met` or `not met`, with the command, result line, test name,
+   log line or PNG path as evidence. Every MUST must be `met`, and at least 90% of all
+   requirements (SHOULD included).
+4. Findings go in the skill's report format as a table
+   (`# | File:line | Defect | Failure scenario | Fix | Guideline section or *judgement* | Status`).
+   A finding is a defect or a gap against a requirement, not a description of what you
+   changed; a weakened test, relaxed threshold or shortfall is a finding even if you think it
+   is justified. With no findings, write `No findings.`. Keep the skill's closing
+   `Guidelines read:` line, naming the guideline files you opened for this review.
+5. Write the report to `~/src/odoo/log/<task>_review.md`. Fix the findings (the test that
+   would have caught each one, red first), commit, set Status to `fixed` and put the commit
+   hash in the Fix cell; leave an ambiguous one `flagged` with the reason. At least 90% of
+   the findings must be `fixed` with a commit that exists. The extension re-checks every time
+   you try to finish and lists what is open.
 
 Before you try to finish, have these done, since the review will find them otherwise:
 - A fresh install on a new test DB (`-i <module> --without-demo`) and a `-u` on a DB that
