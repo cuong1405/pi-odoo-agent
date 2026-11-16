@@ -16,15 +16,16 @@ A `SKILL.md` is only an index; the rules are in the `guidelines/*.md` files it l
   files a moment ago: an earlier read may have covered a different section. All the edits
   and writes you send in one message share one walk; the next message's edit needs a new
   one (a retry of an edit that failed does not). You never open `SKILL.md`. The block message
-  gives the file's path, your intended change and **every row** of the index as a separate
-  item (number, title, "Read it when", guideline file). Answer with **one `guideline_row` tool
-  call per row, all sent in the same message** (the way you send several `edit` calls at
-  once): `{row, apply, why}`, `apply=true` when the row's "Read it when" matches this edit or
-  the task you are working on (what the code does, not only which file it is),
-  `apply=false` otherwise, and `why` in a few words saying what matched or why not. Each
-  result says how many rows are answered; send the missing ones. An unknown row or an empty
-  `why` is not recorded, and an answer set where every row is `false` is discarded. Then
-  read every guideline file you queued (any tool, again even if read before) and repeat the
+  gives the file's path and your intended change; **every row** of the index then appears in
+  that same message as its own `guideline_row` tool call with its own result (number, title,
+  "Read it when", guideline file). Decide each row with **one `guideline_row` tool call per
+  row, all sent in the same message** (the way you send several `edit` calls at once):
+  `{row, apply, why}`, `apply=true` when the row's "Read it when" matches this edit or the
+  task you are working on (what the code does, not only which file it is), `apply=false`
+  otherwise, and `why` in a few words saying what matched or why not. The result of an
+  applying row is the guideline file itself, read right then; each result also says how many
+  rows are answered, so send the missing ones. An unknown row or an empty `why` is not
+  recorded, and an answer set where every row is `false` is discarded. Then repeat the
   edit. `static/` code uses `odoo-web-guidelines`, which has its own walk.
 - Not covered by that block, so load them yourself when relevant: `odoo-security`
   (`sudo`, routes, ACLs, public methods, raw SQL), `odoo-git` (commit message, branch).

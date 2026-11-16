@@ -473,6 +473,13 @@ export default function (pi: ExtensionAPI) {
     }
   };
 
+  pi.on("tool_result", async (event) => {
+    if (event.toolName !== "guideline_row" || event.isError) return undefined;
+    const file = (event.details as { file?: unknown } | undefined)?.file;
+    if (typeof file === "string") noteSkillRead(file);
+    return undefined;
+  });
+
   pi.on("tool_call", async (event, ctx) => {
     if (event.toolName === "edit" || event.toolName === "write") {
       const raw = inputPath(event.input as Record<string, unknown>);
