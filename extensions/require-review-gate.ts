@@ -36,8 +36,12 @@
  * format, and the agent can re-read it after a compaction. A review with no findings says
  * `No findings.` instead of the table.
  *
- * There is deliberately NO retry cap and no escape hatch: the agent keeps working until the
- * bar is met, and the human interrupts the session if it is stuck. Each nudge is shown in
+ * There is no retry cap and no escape hatch the agent can use: it keeps working until the
+ * bar is met, and the human interrupts the session if it is stuck. The one exception is a
+ * stalled agent: when the gate has run more than 3 times in a row and no
+ * edit/write call (any file, the report included) happened between the runs, the gate lets
+ * the agent stop and shows the human a warning with what is still open. Any edit/write
+ * restarts the count. Each nudge is shown in
  * the session (display: true). A new user prompt starts the review stage again, and
  * everything resets on `session_start`. The gate applies only once the agent has edited
  * code, so questions and read-only work are never held.
@@ -55,6 +59,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const MIN_FIXED_RATIO = 0.9;
 const MIN_MET_RATIO = 0.9;
+const MAX_IDLE_RUNS = 3;
 const LOG_DIR = path.resolve(
   process.env.ODOO_LOG_DIR || path.join(os.homedir(), "src", "odoo", "log"),
 );
@@ -437,15 +442,20 @@ export default function (pi: ExtensionAPI) {
   let skillSeq = 0; // last time odoo-review/SKILL.md was opened
   let nudges = 0; // only numbers the messages
   let missingReported = false;
+  let lastAnyEdit = 0; // any edit/write call, whatever the file (the report counts)
+  let editSnapshot = -1; // lastAnyEdit at the previous gate run; -1 = no run yet
+  let idleRuns = 0; // consecutive gate runs with no edit/write call in between
   const skillReads = new Map<string, number>(); // abs path of skill .md -> seq when opened
   const editedDirs = new Set<string>();
 
   const resetReview = () => {
     requestSeq = requestTime = skillSeq = nudges = 0;
     missingReported = false;
+    editSnapshot = -1;
+    idleRuns = 0;
   };
   pi.on("session_start", () => {
-    seq = lastEdit = 0;
+    seq = lastEdit = lastAnyEdit = 0;
     skillReads.clear();
     editedDirs.clear();
     resetReview();
@@ -467,6 +477,7 @@ export default function (pi: ExtensionAPI) {
     if (event.toolName === "edit" || event.toolName === "write") {
       const raw = inputPath(event.input as Record<string, unknown>);
       if (raw) {
+        lastAnyEdit = ++seq;
         const abs = expand(raw, ctx.cwd);
         if (isCodeEdit(abs)) {
           lastEdit = ++seq;
@@ -532,6 +543,19 @@ export default function (pi: ExtensionAPI) {
 
     if (problems.length === 0) {
       nudges = 0;
+      idleRuns = 0;
+      return undefined;
+    }
+
+    if (editSnapshot >= 0 && lastAnyEdit === editSnapshot) idleRuns++;
+    else idleRuns = 0;
+    editSnapshot = lastAnyEdit;
+    if (idleRuns >= MAX_IDLE_RUNS) {
+      ctx.ui?.notify?.(
+        `require-review-gate: letting the agent stop; the gate ran ${idleRuns + 1} times in a ` +
+          `row and no file was edited in between. Open: ${problems.join(" | ").slice(0, 400)}`,
+        "warning",
+      );
       return undefined;
     }
     nudges++;
