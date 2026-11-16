@@ -6,6 +6,12 @@
  * tired of the task simply says "done". Prose in AGENTS.md cannot stop that. This
  * extension holds the turn open at the point where the agent tries to stop:
  *
+ *  0. Requirements file: the review is measured against `<log dir>/<task>_requirements.md`,
+ *     which the agent writes with the odoo-task-requirements skill (the human chooses per
+ *     task whether to invoke it). The extension never parses the file; it only needs one to
+ *     exist. If none exists when the agent tries to finish, the gate does not run: the agent
+ *     is sent back once, only to tell the human in its final message that the requirements
+ *     file was missing and the work was not reviewed, then it may finish.
  *  1. When the agent tries to finish (after it edited code in this session), it is sent
  *     to review its own work: load the odoo-review skill NOW (a fresh read of its SKILL.md
  *     after this request, even if it was read earlier and nothing was compacted), follow
@@ -13,8 +19,8 @@
  *     hard-coded here), and write the report to `<log dir>/<task>_review.md` in the
  *     skill's report format. The findings go in a table the extension can read (File:line,
  *     Defect, Failure scenario, Fix, Guideline section or *judgement*, Status) and the
- *     skill's closing `Guidelines read:` line stays. The review must also check the
- *     original task text, so a requirement gap is a finding.
+ *     skill's closing `Guidelines read:` line stays. The review must also check the work
+ *     against the requirements file, so a requirement gap is a finding.
  *  2. Each later attempt to finish checks: the skill was read after the request, a report
  *     written after the request exists, it has the closing line, and at least 90% of its
  *     findings have Status `fixed`. Otherwise the agent goes back to fix the open
@@ -84,12 +90,12 @@ export interface Review {
   findings: { id: string; where: string; status: string }[];
 }
 
-function newestReviewSince(minMtimeMs: number): string | undefined {
+function newestLogFileSince(suffix: string, minMtimeMs: number): string | undefined {
   try {
     const files = readdirSync(LOG_DIR)
-      .filter((f) => f.endsWith("_review.md"))
+      .filter((f) => f.endsWith(suffix))
       .map((f) => path.join(LOG_DIR, f))
-      .filter((f) => statSync(f).mtimeMs >= minMtimeMs);
+      .filter((f) => statSync(f).mtimeMs >= minMtimeMs && statSync(f).size > 0);
     files.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
     return files[0];
   } catch {
@@ -138,14 +144,15 @@ export function parseReview(file: string): Review {
   return review;
 }
 
-const REVIEW_REQUEST =
+function reviewRequest(requirementsFile: string): string {
+  return (
   `You are about to finish, so review your own work first (this is the last step):\n` +
   `   a. Load the review skill now: open ${REVIEW_SKILL_MD} with the read tool (even if you ` +
   `read it earlier) and follow ALL of its instructions strictly, every section and not only ` +
   `its numbered process, for the module you changed. Work from the skill itself, not from ` +
   `memory or from this message.\n` +
-  `   b. Also check the work against the original task text: a requirement that is missing, ` +
-  `wrong or untested is a finding (section: *judgement*).\n` +
+  `   b. Also check the work against the task requirements in ${requirementsFile}: a ` +
+  `requirement that is missing, wrong or untested is a finding (section: *judgement*).\n` +
   `   c. Write the report to ${LOG_DIR}/<task>_review.md in the skill's report format. So ` +
   `that this gate can read it, put the findings in a table with exactly these columns ` +
   `(the skill's finding fields plus Status)\n` +
@@ -155,7 +162,9 @@ const REVIEW_REQUEST =
   `   d. Fix every finding you can (add the test that would have caught it, red first; ` +
   `commit), set its Status to \`fixed\` (commit or test in the Fix cell), and leave an ` +
   `ambiguous one as \`flagged\` with the reason in its Fix cell. At least ` +
-  `${MIN_FIXED_RATIO * 100}% of the findings must be \`fixed\` before you may finish.`;
+  `${MIN_FIXED_RATIO * 100}% of the findings must be \`fixed\` before you may finish.`
+  );
+}
 
 function reviewProblems(requestTime: number, skillReadAfterRequest: boolean): string[] {
   const problems: string[] = [];
@@ -165,7 +174,7 @@ function reviewProblems(requestTime: number, skillReadAfterRequest: boolean): st
         `${REVIEW_SKILL_MD} with the read tool, then review per its Process.`,
     );
   }
-  const file = newestReviewSince(requestTime);
+  const file = newestLogFileSince("_review.md", requestTime);
   if (!file) {
     problems.push(
       `No review report written since the review was requested: write ` +
@@ -202,6 +211,13 @@ function reviewProblems(requestTime: number, skillReadAfterRequest: boolean): st
   return problems;
 }
 
+const MISSING_REQUIREMENTS =
+  `The review gate cannot run: no task requirements file exists (${LOG_DIR}/<task>_requirements.md, ` +
+  `written with the odoo-task-requirements skill). Do not review and do not keep working. ` +
+  `End your final message by telling the human plainly that the task requirements file was ` +
+  `missing, so the review gate did not run and the work has not been reviewed; then ` +
+  `summarise what you did and what is still unverified.`;
+
 // ------------------------------------------------------------ extension
 
 export default function (pi: ExtensionAPI) {
@@ -211,9 +227,11 @@ export default function (pi: ExtensionAPI) {
   let requestTime = 0;
   let skillSeq = 0; // last time odoo-review/SKILL.md was opened
   let nudges = 0; // only numbers the messages
+  let missingReported = false;
 
   const resetReview = () => {
     requestSeq = requestTime = skillSeq = nudges = 0;
+    missingReported = false;
   };
   pi.on("session_start", () => {
     seq = lastEdit = 0;
@@ -243,15 +261,32 @@ export default function (pi: ExtensionAPI) {
     return undefined;
   });
 
-  pi.on("agent_before_settle", async (event) => {
+  pi.on("agent_before_settle", async (event, ctx) => {
     if (lastEdit === 0) return undefined; // no code touched: nothing to gate
     if (event.outcome !== "completed") return undefined; // errors/aborts are hard exits
+
+    const requirementsFile = newestLogFileSince("_requirements.md", 0);
+    if (!requirementsFile) {
+      if (missingReported) return undefined; // already told the human: let the agent finish
+      missingReported = true;
+      ctx.ui?.notify?.(
+        "require-review-gate: no task requirements file; the review gate did not run",
+        "warning",
+      );
+      return {
+        entries: [
+          ...event.entries,
+          { type: "custom_message", customType: "review-gate", content: MISSING_REQUIREMENTS, display: true },
+        ],
+        continue: true,
+      };
+    }
 
     let problems: string[];
     if (requestSeq === 0) {
       requestSeq = ++seq;
       requestTime = Date.now();
-      problems = [REVIEW_REQUEST];
+      problems = [reviewRequest(requirementsFile)];
     } else {
       problems = reviewProblems(requestTime, skillSeq > requestSeq);
     }

@@ -220,13 +220,20 @@ Time is not a constraint, thoroughness is: spend it on verification, not on aski
   note exactly what blocks you and what you tried, try another approach, and keep working on
   the rest. Never act on `pouet` to get around it.
 
+### Task requirements
+For a larger task the human has you use the `odoo-task-requirements` skill: load it first and
+write `~/src/odoo/log/<task>_requirements.md` before any code, then update it on every
+follow-up prompt. The review gate below needs that file. If it does not exist when you try to
+finish, the gate does not run: tell the human plainly in your final message that the
+requirements file was missing and the work was not reviewed, and stop.
+
 ### Finishing: the review gate
 When you try to finish after editing code, the `require-review-gate` extension holds the
 turn open until you have reviewed your own work and fixed what the review found:
 1. Open the `odoo-review` skill's `SKILL.md` with the `read` tool again (even if you read it
    before) and follow **all** of its instructions strictly, every section and not only its
    numbered process: the sibling house-rule skills it points to are the floor, then the
-   merits pass, and so on. Also check the work against the original task text and run the
+   merits pass, and so on. Also check the work against your requirements file and run the
    module's tests: a requirement that is missing, wrong or untested is a finding.
 2. Write the report to `~/src/odoo/log/<task>_review.md` in the skill's report format, with
    the findings in the table the extension's message gives you

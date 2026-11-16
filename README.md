@@ -11,10 +11,12 @@ Odoo's own setup).
 | `extensions/describe-screenshot.ts` | `~/.pi/agent/extensions/` |
 | `extensions/require-skill-reads.ts` | `~/.pi/agent/extensions/` |
 | `extensions/require-review-gate.ts` | `~/.pi/agent/extensions/` |
+| `skills/odoo-task-requirements/` | `~/.pi/agent/skills/` |
 
 ```bash
 cp AGENTS.md ~/src/odoo/AGENTS.md
 cp extensions/*.ts ~/.pi/agent/extensions/      # then restart pi
+cp -r skills/odoo-task-requirements ~/.pi/agent/skills/
 ```
 
 Copy, don't symlink: the sandbox only mounts `~/.pi` and `~/src/odoo`, so a symlink into this
