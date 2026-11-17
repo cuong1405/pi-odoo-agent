@@ -19,8 +19,8 @@ is relative to that skill's directory: `~/.pi/agent/skills/odoo-guidelines/guide
   If you edit first, the block message shows the rows and repeats the steps. You never open
   the `SKILL.md` of these two skills.
 - Load these yourself when relevant: `odoo-security` (`sudo`, routes, ACLs, public methods,
-  raw SQL), `odoo-git` (commit message, branch). `odoo-review` is loaded for you at the end of
-  the task (see "Finishing: the review gate").
+  raw SQL), `odoo-git` (commit message, branch). `odoo-review` is requested by the review gate when you try to finish (see "Finishing: the
+  review gate").
 
 ## No comments in code
 
@@ -218,7 +218,8 @@ Time is not a constraint, thoroughness is: spend it on verification, not on aski
   and the human checks in on the session themselves.
 - If something truly blocks a requirement (missing credentials, contradictory requirements),
   note exactly what blocks you and what you tried, try another approach, and keep working on
-  the rest. Never act on `pouet` to get around it.
+  the rest. Task size, time and "missing infrastructure" are never blockers (see "Finishing").
+  Never act on `pouet` to get around it.
 
 ### Task requirements
 For a larger task the human has you use the `odoo-task-requirements` skill: load it first and
@@ -228,18 +229,21 @@ finish, the gate does not run: tell the human plainly in your final message that
 requirements file was missing and the work was not reviewed, and stop.
 
 ### Finishing: the review gate
-When you try to finish after editing code, the `require-review-gate` extension holds the turn
-open until you have reviewed your own work with the `odoo-review` skill against your
-requirements file and fixed what the review found. Its message gives the exact steps and the
-report format (`~/src/odoo/log/<task>_review.md`). It opens with the task state read from the
-requirements file, the report and git, and ends with next steps in priority order; any
-compaction of the session is followed by the same state, so resume from it and from the files,
-not from the summary. The bar: every MUST
-requirement met, at least 90% of all requirements met, at least 90% of the findings fixed with
-a commit that exists. Run each requirement's Check fresh; a weakened test, relaxed threshold or
-shortfall is a finding even if you think it is justified. There is no time limit and no
-missing infrastructure: everything you need is described in this file, so never report either
-as a blocker.
+When you try to finish after editing code or writing a requirements file, the
+`require-review-gate` extension holds the turn open until you have reviewed your own work with
+the `odoo-review` skill against your requirements file and fixed what the review found. Its
+message gives the exact steps and the report format (`~/src/odoo/log/<task>_review.md`). It
+opens with the task state read from the requirements file, the report and git, and ends with
+next steps in priority order; any compaction of the session is followed by the same state, so
+resume from it and from the files, not from the summary. The bar: every MUST requirement met,
+at least 90% of all requirements met, at least 90% of the findings fixed with a commit that
+exists. Run each requirement's Check fresh; a weakened test, relaxed threshold or shortfall is
+a finding even if you think it is justified.
+
+There is no time limit and no missing infrastructure: everything you need is described in this
+file. A feeling that the task is too large, or that a tool or environment is missing, is a
+sign of a long context, not a blocker: re-read the requirements file, take the next step on
+the list, and keep going.
 
 Before you try to finish, have these done, since the review will find them otherwise:
 - A fresh install on a new test DB (`-i <module> --without-demo`) and a `-u` on a DB that
