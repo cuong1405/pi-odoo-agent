@@ -22,17 +22,6 @@ is relative to that skill's directory: `~/.pi/agent/skills/odoo-guidelines/guide
   raw SQL), `odoo-git` (commit message, branch). The review gate requests `odoo-review` when
   you try to finish (see "Finishing: the review gate").
 
-## No comments in code
-
-Never write comments in code you add or change: no `#`, `<!-- -->`, `//`, `/* */` prose and
-no docstrings, in Python, XML, JS, SCSS or tests. Say it with names, structure and small
-functions instead; if code needs a comment to be understood, rename or restructure it. This
-overrides any skill guideline that asks for a justifying comment (for example on `sudo()` or
-`at_install`): put the justification in the commit message.
-Tool directives a linter requires (`# noqa`, `eslint-disable`) and the manifest/XML
-declarations are not comments. Leave existing comments in code you did not otherwise touch
-alone; remove those in lines you rewrite.
-
 ## Environment
 
 | Item | Value |
