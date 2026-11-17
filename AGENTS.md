@@ -231,8 +231,10 @@ requirements file was missing and the work was not reviewed, and stop.
 When you try to finish after editing code, the `require-review-gate` extension holds the turn
 open until you have reviewed your own work with the `odoo-review` skill against your
 requirements file and fixed what the review found. Its message gives the exact steps and the
-report format (`~/src/odoo/log/<task>_review.md`), and arrives right after a compaction of the
-session, so re-read your requirements file and report from disk. The bar: every MUST
+report format (`~/src/odoo/log/<task>_review.md`). It opens with the task state read from the
+requirements file, the report and git, and ends with next steps in priority order; any
+compaction of the session is followed by the same state, so resume from it and from the files,
+not from the summary. The bar: every MUST
 requirement met, at least 90% of all requirements met, at least 90% of the findings fixed with
 a commit that exists. Run each requirement's Check fresh; a weakened test, relaxed threshold or
 shortfall is a finding even if you think it is justified. There is no time limit and no
