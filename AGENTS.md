@@ -19,8 +19,8 @@ is relative to that skill's directory: `~/.pi/agent/skills/odoo-guidelines/guide
   If you edit first, the block message shows the rows and repeats the steps. You never open
   the `SKILL.md` of these two skills.
 - Load these yourself when relevant: `odoo-security` (`sudo`, routes, ACLs, public methods,
-  raw SQL), `odoo-git` (commit message, branch). `odoo-review` is requested by the review gate when you try to finish (see "Finishing: the
-  review gate").
+  raw SQL), `odoo-git` (commit message, branch). The review gate requests `odoo-review` when
+  you try to finish (see "Finishing: the review gate").
 
 ## No comments in code
 
