@@ -1,43 +1,26 @@
 # Odoo 20.0 - AGENTS.md
 
-Project-specific environment, commands and test-reporting rules. The Odoo skills (installed)
-hold the house rules for ORM, fields, XML, security, tests and JS/SCSS; where they disagree
-with habit, the skill wins, and on any blockage re-read the skill before guessing.
+Project-specific environment, commands and test-reporting rules. The Odoo skills hold the
+house rules for ORM, fields, XML, security, tests and JS/SCSS; where a guideline disagrees
+with habit, the guideline wins, and on any blockage re-read the guideline file that covers the
+construct before guessing.
 
-## Skills: you must load them yourself
+## Skills
 
-Skills live in `~/.pi/agent/skills/<skill>/`. Links inside a `SKILL.md` or guideline
-(`guidelines/tests.md`, `tests.md`) are relative to that skill's directory, not to your cwd
-or the addon: `tests.md` here means `~/.pi/agent/skills/odoo-guidelines/guidelines/tests.md`.
-A `SKILL.md` is only an index; the rules are in the `guidelines/*.md` files it links.
+Skills live in `~/.pi/agent/skills/<skill>/`. A relative link inside a guideline (`tests.md`)
+is relative to that skill's directory: `~/.pi/agent/skills/odoo-guidelines/guidelines/tests.md`.
 
-- **Every** batch of edits or writes of addon code (all the ones in one message) needs a
-  fresh walk of the matching skill's guideline index, even if you walked it a moment ago: an
-  earlier read may have covered a different section. An edit sent without the walk is
-  blocked. You never open `SKILL.md`: its index (row ids `G1..` for `odoo-guidelines`, used
-  for everything outside `static/`; `W1..` for `odoo-web-guidelines`, used for `static/src`
-  and `static/tests`) is in your system prompt under `odoo_guideline_index`. Two messages:
-  1. **Select.** Before the edit, send **one `guideline_row` call per row of the skill, all in
-     the same message** (the way you send several `edit` calls at once): `{row, apply, why}`,
-     `apply=true` when the row's "Read it when" matches this edit or the task (what the code
-     does, not only which file it is), `apply=false` otherwise, `why` in a few words. The
-     result of an applying row is that guideline **section** itself.
-  2. **Check, then edit.** In the next message send **one `guideline_check` call first and
-     your edit/write calls after it** (calls run in the order sent): for each accepted row
-     and each file you edit, at least one `{row, path, rule, complies, evidence}`, where
-     `rule` is one rule copied **verbatim** from that row's section (preferably the one your
-     edit is most likely to break; the quote is verified), `complies` says whether the
-     attempt follows it, and `evidence` says what satisfies it or what is wrong. Where it
-     breaks the rule, `complies: false` plus `fix`, the corrected code exactly as it will
-     appear in your edit: an edit that does not contain the fix is blocked. Write the edit
-     after the check so it reflects it.
-  If you edit first, the edit is blocked and the rows of the index appear in that same
-  message as injected `guideline_row` calls; walk them, then do step 2. A walk expires 3
-  turns after it started if no edit used it. An edit that touches both skills needs the rows
-  of both.
-- Not covered by that block, so load them yourself when relevant: `odoo-security`
-  (`sudo`, routes, ACLs, public methods, raw SQL), `odoo-git` (commit message, branch).
-  `odoo-review` is loaded for you at the end of the task (see "Finishing: the review gate").
+- **Edits and writes of addon code are gated** by the `require-skill-reads` extension. Walk
+  the guideline index in your system prompt (`odoo_guideline_index`; rows `G*` for everything
+  outside `static/`, `W*` for `static/src` and `static/tests`): one `guideline_row` call per
+  row, all in one message, then in the next message one `guideline_check` call first and your
+  edits after it. Quotes are verified, and a `complies: false` check needs a `fix` that the
+  edit must contain. Every batch of edits needs a new walk, even if you walked a moment ago.
+  If you edit first, the block message shows the rows and repeats the steps. You never open
+  the `SKILL.md` of these two skills.
+- Load these yourself when relevant: `odoo-security` (`sudo`, routes, ACLs, public methods,
+  raw SQL), `odoo-git` (commit message, branch). `odoo-review` is loaded for you at the end of
+  the task (see "Finishing: the review gate").
 
 ## No comments in code
 
@@ -245,33 +228,16 @@ finish, the gate does not run: tell the human plainly in your final message that
 requirements file was missing and the work was not reviewed, and stop.
 
 ### Finishing: the review gate
-When you try to finish after editing code, the `require-review-gate` extension holds the
-turn open until you have reviewed your own work and fixed what the review found. Each of its
-messages arrives right after a compaction of the session, so re-read your requirements file
-and the report from disk. There is no time limit and no missing infrastructure: everything
-you need is described in this file, so never report either as a blocker.
-1. Open the `odoo-review` skill's `SKILL.md` with the `read` tool again (even if you read it
-   before) and follow **all** of its instructions strictly, every section and not only its
-   numbered process: the sibling house-rule skills it points to are the floor, then the
-   merits pass, and so on. Open the guideline files again for this review.
-2. Review the whole task: the `Base:` commit of your requirements file to HEAD, plus
-   uncommitted and untracked files. Every changed file must appear in the report.
-3. Check every requirement in your requirements file by running its Check now, never from
-   memory or an earlier run. The report has one row per requirement number
-   (`# | Verdict | Evidence`): `met` or `not met`, with the command, result line, test name,
-   log line or PNG path as evidence. Every MUST must be `met`, and at least 90% of all
-   requirements (SHOULD included).
-4. Findings go in the skill's report format as a table
-   (`# | File:line | Defect | Failure scenario | Fix | Guideline section or *judgement* | Status`).
-   A finding is a defect or a gap against a requirement, not a description of what you
-   changed; a weakened test, relaxed threshold or shortfall is a finding even if you think it
-   is justified. With no findings, write `No findings.`. Keep the skill's closing
-   `Guidelines read:` line, naming the guideline files you opened for this review.
-5. Write the report to `~/src/odoo/log/<task>_review.md`. Fix the findings (the test that
-   would have caught each one, red first), commit, set Status to `fixed` and put the commit
-   hash in the Fix cell; leave an ambiguous one `flagged` with the reason. At least 90% of
-   the findings must be `fixed` with a commit that exists. The extension re-checks every time
-   you try to finish and lists what is open.
+When you try to finish after editing code, the `require-review-gate` extension holds the turn
+open until you have reviewed your own work with the `odoo-review` skill against your
+requirements file and fixed what the review found. Its message gives the exact steps and the
+report format (`~/src/odoo/log/<task>_review.md`), and arrives right after a compaction of the
+session, so re-read your requirements file and report from disk. The bar: every MUST
+requirement met, at least 90% of all requirements met, at least 90% of the findings fixed with
+a commit that exists. Run each requirement's Check fresh; a weakened test, relaxed threshold or
+shortfall is a finding even if you think it is justified. There is no time limit and no
+missing infrastructure: everything you need is described in this file, so never report either
+as a blocker.
 
 Before you try to finish, have these done, since the review will find them otherwise:
 - A fresh install on a new test DB (`-i <module> --without-demo`) and a `-u` on a DB that
@@ -311,13 +277,9 @@ Keep it short and evidence-based:
 ## Browser tests (screenshots): always capture, always inspect
 
 Required: `websocket-client` (`~/src/odoo/venv/bin/pip install websocket-client`, otherwise
-`ChromeBrowser` raises `SkipTest` and the test silently passes) and `ODOO_BROWSER_BIN` set
-to the Chromium binary. Always use this exact path (the snap `current` symlink survives
-snap updates; never use a numbered revision path):
-
-`ODOO_BROWSER_BIN=/snap/chromium/current/usr/lib/chromium-browser/chrome`
-
-If the binary is missing (`ls` fails), report it as a blocker; do not guess another path.
+`ChromeBrowser` raises `SkipTest` and the test silently passes) and `ODOO_BROWSER_BIN` set to
+the Chromium path in "Environment" (the snap `current` symlink; never a numbered revision
+path). If the binary is missing (`ls` fails), report it as a blocker; do not guess another path.
 
 Run browser tests as their **own command with a hard class/method selection**, separate from
 the normal unit-test run, on a test DB (never `pouet`):
