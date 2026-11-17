@@ -116,11 +116,12 @@ traceback. Act on what it points to before forming your own hypothesis.
 
 When a test fails you see only its output. A failure like `False is not true` costs a round
 of guessing; one that names the method, field, expected value and likely cause saves it.
-Every test you write must be diagnosable from its failure alone. Every back-end behaviour you
-add gets a unit test, and every front-end behaviour a browser test with screenshots
-("Browser tests").
-This complements `tests.md` (assert behaviour, not implementation); the hint lives in the
-message, never in the assertion logic.
+Every test you write must be diagnosable from its failure alone. Tests are how you learn what
+is wrong with your own module: write them for the behaviour the task's requirements describe,
+not for every line of code.
+This complements `tests.md` (base classes, tags, silent skips, assert behaviour not
+implementation), which says nothing about failure messages; the hint lives in the message,
+never in the assertion logic.
 
 ### Message contract
 
@@ -152,8 +153,8 @@ Honesty rules:
 
 ### Structure
 
-- Start from `BaseCommon` (see `tests.md`) and build the scenario in `setUpClass`. Keep
-  scenario values in named variables so messages can interpolate them.
+- Build the scenario in `setUpClass` and keep its values in named variables, so messages can
+  interpolate them.
 - One behaviour per method, named `test_<model>_<action>_<expected>`: the name is already
   half the diagnosis.
 - Several fields on several records: `assertRecordValues(records, [...])`. It prints a
@@ -175,15 +176,17 @@ Honesty rules:
 - Compute/onchange/constraint tests assert the *trigger*, not just the end state: change the
   dependency, then check the result, so a missing `@api.depends` is caught.
 - No vacuous passes: assert a recordset is non-empty before looping over it.
-- No `assertQueryCount` in business tests (`tests.md`).
-- The test file must be named `test_*.py`, imported from `tests/__init__.py`, with the class
-  defined in that file; otherwise it is silently skipped (N tests will not grow).
 
 ### Fix discipline
 
 - Iterate on the single failing method, then run the full module gate once.
-- A second failed fix attempt is a stop sign: re-read the skill and the 20.0 source, then
-  change approach instead of trying another blind variation.
+- Decide what a failure says before changing anything: the code does not meet the requirement
+  (fix the code), the test asserts something the requirement does not state (fix the test and
+  name the requirement in the commit message), or the requirement is ambiguous (record the
+  interpretation under Assumptions in the requirements file). Never change an expectation just
+  to get green.
+- A second failed fix attempt is a stop sign: re-read the guideline section and the 20.0
+  source, then change approach instead of trying another blind variation.
 
 ## Autonomous operation (long sessions, minimal human review)
 
