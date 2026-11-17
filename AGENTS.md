@@ -116,7 +116,9 @@ traceback. Act on what it points to before forming your own hypothesis.
 
 When a test fails you see only its output. A failure like `False is not true` costs a round
 of guessing; one that names the method, field, expected value and likely cause saves it.
-Every test you write must be diagnosable from its failure alone.
+Every test you write must be diagnosable from its failure alone. Every back-end behaviour you
+add gets a unit test, and every front-end behaviour a browser test with screenshots
+("Browser tests").
 This complements `tests.md` (assert behaviour, not implementation); the hint lives in the
 message, never in the assertion logic.
 
@@ -177,18 +179,6 @@ Honesty rules:
 - The test file must be named `test_*.py`, imported from `tests/__init__.py`, with the class
   defined in that file; otherwise it is silently skipped (N tests will not grow).
 
-### Prove the test can fail
-
-A test never seen red is not evidence. For each new or changed test:
-
-1. Introduce one deliberate break in the code under test (drop a depends field, flip a
-   domain, remove a constraint), run just that test with `--test-tags`.
-2. Confirm it fails **and** that the message points at the broken method/field.
-3. Restore the code, confirm green, and check `git diff` shows no leftover break.
-
-Put the test name, the break tried and the message produced in the commit message. If you cannot
-break it, the test asserts nothing useful: rewrite it.
-
 ### Fix discipline
 
 - Iterate on the single failing method, then run the full module gate once.
@@ -239,8 +229,8 @@ Before you try to finish, have these done, since the review will find them other
   already has the module, both succeeding (also with demo data if the module ships demo).
 - The full module suite green with N > 0 (see "Reading results"), after your last code
   change; no `ERROR` / `Traceback` / unexpected `WARNING` from your module in the logs.
-- `git status` clean apart from intended changes: commit them, remove debug code, stray
-  files and any leftover deliberate break from "Prove the test can fail".
+- `git status` clean apart from intended changes: commit them, remove debug code and stray
+  files.
 - For UI tasks: the browser test ran and every screenshot was inspected with
   `describe_screenshot` ("Browser tests"). A green browser test alone never satisfies this.
 

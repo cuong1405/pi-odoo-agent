@@ -348,8 +348,8 @@ function reviewRequest(requirementsFile: string): string {
     `   e. Keep the skill's closing \`Guidelines read:\` line, listing the guideline files you ` +
     `opened for this review (for example odoo-guidelines/python.md); each must have been ` +
     `opened after this request.\n` +
-    `   f. Write the report to ${LOG_DIR}/<task>_review.md. Fix every finding you can (add the ` +
-    `test that would have caught it, red first) and commit; set Status to \`fixed\` and put ` +
+    `   f. Write the report to ${LOG_DIR}/<task>_review.md. Fix every finding you can (with a test ` +
+    `that covers it) and commit; set Status to \`fixed\` and put ` +
     `the commit hash in the Fix cell. Leave an ambiguous one \`flagged\` with the reason in ` +
     `its Fix cell. At least ${MIN_FIXED_RATIO * 100}% of the findings must be \`fixed\` with ` +
     `a commit that exists in the repository.`
@@ -493,7 +493,7 @@ function reviewProblems(c: ReviewContext): Problem[] {
       2,
       `Only ${fixed}/${review.findings.length} review findings are fixed with a real commit ` +
         `(${Math.round(ratio * 100)}%, need at least ${MIN_FIXED_RATIO * 100}%). Open: ` +
-        `${list(open)}. Fix them (test red first), commit, put the commit hash in the Fix ` +
+        `${list(open)}. Fix them (with a test that covers each), commit, put the commit hash in the Fix ` +
         `cell and set Status to \`fixed\` in ${file}.`,
     );
   }
@@ -560,7 +560,7 @@ function snapshot(c: { requirementsFile: string; roots: Set<string>; reviewSince
           open.slice(0, 8).map((f) => `    #${f.id} ${f.where} (${f.status || "no status"})`).join("\n"),
       );
       if (open.length > 8) lines.push(`    ... (+${open.length - 8} more)`);
-      steps.push(`Fix the open findings (test red first), commit, put the hash in the Fix cell.`);
+      steps.push(`Fix the open findings (with a test that covers each), commit, put the hash in the Fix cell.`);
     }
     const unmetShould = unmet.filter((r) => r.kind !== "must");
     if (!unmetMust.length && unmetShould.length && (req.rows.length - unmet.length) / req.rows.length < MIN_MET_RATIO) {
