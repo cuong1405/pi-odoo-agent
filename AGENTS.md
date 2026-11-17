@@ -11,22 +11,30 @@ Skills live in `~/.pi/agent/skills/<skill>/`. Links inside a `SKILL.md` or guide
 or the addon: `tests.md` here means `~/.pi/agent/skills/odoo-guidelines/guidelines/tests.md`.
 A `SKILL.md` is only an index; the rules are in the `guidelines/*.md` files it links.
 
-- **Every** edit or write of addon code is blocked until you have walked the matching
-  skill's guideline index and read what applies, even if you walked it and read the same
-  files a moment ago: an earlier read may have covered a different section. All the edits
-  and writes you send in one message share one walk; the next message's edit needs a new
-  one (a retry of an edit that failed does not). You never open `SKILL.md`. The block message
-  gives the file's path and your intended change; **every row** of the index then appears in
-  that same message as its own `guideline_row` tool call with its own result (number, title,
-  "Read it when", guideline file). Decide each row with **one `guideline_row` tool call per
-  row, all sent in the same message** (the way you send several `edit` calls at once):
-  `{row, apply, why}`, `apply=true` when the row's "Read it when" matches this edit or the
-  task you are working on (what the code does, not only which file it is), `apply=false`
-  otherwise, and `why` in a few words saying what matched or why not. The result of an
-  applying row is the guideline file itself, read right then; each result also says how many
-  rows are answered, so send the missing ones. An unknown row or an empty `why` is not
-  recorded, and an answer set where every row is `false` is discarded. Then repeat the
-  edit. `static/` code uses `odoo-web-guidelines`, which has its own walk.
+- **Every** batch of edits or writes of addon code (all the ones in one message) needs a
+  fresh walk of the matching skill's guideline index, even if you walked it a moment ago: an
+  earlier read may have covered a different section. An edit sent without the walk is
+  blocked. You never open `SKILL.md`: its index (row ids `G1..` for `odoo-guidelines`, used
+  for everything outside `static/`; `W1..` for `odoo-web-guidelines`, used for `static/src`
+  and `static/tests`) is in your system prompt under `odoo_guideline_index`. Two messages:
+  1. **Select.** Before the edit, send **one `guideline_row` call per row of the skill, all in
+     the same message** (the way you send several `edit` calls at once): `{row, apply, why}`,
+     `apply=true` when the row's "Read it when" matches this edit or the task (what the code
+     does, not only which file it is), `apply=false` otherwise, `why` in a few words. The
+     result of an applying row is that guideline **section** itself.
+  2. **Check, then edit.** In the next message send **one `guideline_check` call first and
+     your edit/write calls after it** (calls run in the order sent): for each accepted row
+     and each file you edit, at least one `{row, path, rule, complies, evidence}`, where
+     `rule` is one rule copied **verbatim** from that row's section (preferably the one your
+     edit is most likely to break; the quote is verified), `complies` says whether the
+     attempt follows it, and `evidence` says what satisfies it or what is wrong. Where it
+     breaks the rule, `complies: false` plus `fix`, the corrected code exactly as it will
+     appear in your edit: an edit that does not contain the fix is blocked. Write the edit
+     after the check so it reflects it.
+  If you edit first, the edit is blocked and the rows of the index appear in that same
+  message as injected `guideline_row` calls; walk them, then do step 2. A walk expires 3
+  turns after it started if no edit used it. An edit that touches both skills needs the rows
+  of both.
 - Not covered by that block, so load them yourself when relevant: `odoo-security`
   (`sudo`, routes, ACLs, public methods, raw SQL), `odoo-git` (commit message, branch).
   `odoo-review` is loaded for you at the end of the task (see "Finishing: the review gate").
