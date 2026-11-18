@@ -18,6 +18,9 @@ is relative to that skill's directory: `~/.pi/agent/skills/odoo-guidelines/guide
   edit must contain. Every batch of edits needs a new walk, even if you walked a moment ago.
   If you edit first, the block message shows the rows and repeats the steps. You never open
   the `SKILL.md` of these two skills.
+- Change files with `edit`/`write` only; shell edits (`sed -i`, redirects, `tee`, inline
+  `python -c`) are blocked. If a change is too complex for those tools, as a last resort write
+  a script under `/tmp` with `write` and run it.
 - Load these yourself when relevant: `odoo-security` (`sudo`, routes, ACLs, public methods,
   raw SQL), `odoo-git` (commit message, branch). The review gate requests `odoo-review` when
   you try to finish (see "Finishing: the review gate").
@@ -27,7 +30,7 @@ is relative to that skill's directory: `~/.pi/agent/skills/odoo-guidelines/guide
 | Item | Value |
 |---|---|
 | Odoo source | `~/src/odoo/odoo/` (`odoo-bin`, package `odoo/odoo/`), branch `20.0` |
-| Python | `~/src/odoo/venv/bin/python` (always this one) |
+| Python | `~/src/odoo/.venv/bin/python` (always this one; packages go in with `uv pip install --python ~/src/odoo/.venv/bin/python ...`, never bare `pip`) |
 | Config | `~/src/odoo/config/odoo.conf`, defines addons_path, http_port, etc. |
 | Logs | `~/src/odoo/log/` (create if needed) |
 | Screenshots | `/tmp/odoo_tests/<db>/screenshots/` (Odoo default, `--screenshots` overrides) |
@@ -49,7 +52,7 @@ as below avoids the problem.
 ## Command template
 
 ```bash
-~/src/odoo/venv/bin/python ~/src/odoo/odoo/odoo-bin --config=~/src/odoo/config/odoo.conf \
+~/src/odoo/.venv/bin/python ~/src/odoo/odoo/odoo-bin --config=~/src/odoo/config/odoo.conf \
   -d <db> <ops> --stop-after-init --logfile=~/src/odoo/log/<name>.log
 ```
 
@@ -84,7 +87,7 @@ Rules:
   a bare `post_install` do not match.
 - A test only runs if the module is installed in that DB:
   `psql -d <db> -c "SELECT state FROM ir_module_module WHERE name='<module>'"`.
-- Quick syntax gate before any run: `~/src/odoo/venv/bin/python -m py_compile <file>`.
+- Quick syntax gate before any run: `~/src/odoo/.venv/bin/python -m py_compile <file>`.
 - A change to addon code, JS, SCSS, templates or `ir.asset`/`ir.ui.view` data needs a
   server restart on the served DB; `-u` alone leaves stale assets.
 - Servers: start one only inside your own session and record its pid
@@ -237,7 +240,7 @@ Before you try to finish, have these done, since the review will find them other
 - For UI tasks: the browser test ran and every screenshot was inspected with
   `describe_screenshot` ("Browser tests"). A green browser test alone never satisfies this.
 
-The merits pass must also cover, beyond the guidelines:
+Your review must also cover these, which the guidelines do not spell out:
 - Negative cases: wrong user/group, empty or multi-record sets, multi-company, archived
   records, duplicate or invalid input, cancel/reopen flows.
 - Access: new models without ACL rows, `sudo()` without justification, record rules that
@@ -264,7 +267,7 @@ Keep it short and evidence-based:
 
 ## Browser tests (screenshots): always capture, always inspect
 
-Required: `websocket-client` (`~/src/odoo/venv/bin/pip install websocket-client`, otherwise
+Required: `websocket-client` (`uv pip install --python ~/src/odoo/.venv/bin/python websocket-client`, otherwise
 `ChromeBrowser` raises `SkipTest` and the test silently passes) and `ODOO_BROWSER_BIN` set to
 the Chromium path in "Environment" (the snap `current` symlink; never a numbered revision
 path). If the binary is missing (`ls` fails), report it as a blocker; do not guess another path.
@@ -273,7 +276,7 @@ Run browser tests as their **own command with a hard class/method selection**, s
 the normal unit-test run, on a test DB (never `pouet`):
 
 ```bash
-ODOO_BROWSER_BIN=/snap/chromium/current/usr/lib/chromium-browser/chrome ~/src/odoo/venv/bin/python ~/src/odoo/odoo/odoo-bin \
+ODOO_BROWSER_BIN=/snap/chromium/current/usr/lib/chromium-browser/chrome ~/src/odoo/.venv/bin/python ~/src/odoo/odoo/odoo-bin \
   --config=~/src/odoo/config/odoo.conf -d test_<module> -u <module> --test-enable \
   --test-tags ':Test<Module>Visual' --stop-after-init \
   --logfile=~/src/odoo/log/test_visual_<module>.log
