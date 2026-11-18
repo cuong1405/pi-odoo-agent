@@ -12,7 +12,8 @@ description: >-
 Write down what the task asks, before touching code, in one file. The final review
 (`odoo-review`, run by the review gate) is measured against it, so a requirement that is not
 in the file is not reviewed. The file is a faithful record of the prompt, not a plan and not
-a summary.
+a summary. It is also the only place the review is recorded: the review fills in the Verdict
+and Evidence columns and adds the closing `## Review` section. There is no separate report.
 
 ## Where
 
@@ -34,10 +35,10 @@ Base: <branch>, <commit the work starts from>
 copied exactly>
 
 ## Requirements
-| # | Requirement | MUST/SHOULD | Source | Check |
-|---|---|---|---|---|
-| 1 | A confirmed `library.loan` cannot be edited by a portal user | MUST | "portal users never edit a confirmed loan" | test: portal user write raises AccessError |
-| 2 | Loan list shows the due date | MUST | implied: "loans must be trackable" | screenshot of the list view |
+| # | Requirement | MUST/SHOULD | Source | Check | Verdict | Evidence |
+|---|---|---|---|---|---|---|
+| 1 | A confirmed `library.loan` cannot be edited by a portal user | MUST | "portal users never edit a confirmed loan" | test: portal user write raises AccessError | | |
+| 2 | Loan list shows the due date | MUST | implied: "loans must be trackable" | screenshot of the list view | | |
 
 ## Out of scope
 - <what the prompt says not to do>
@@ -47,9 +48,13 @@ copied exactly>
 
 ## Changes
 - <date> follow-up: <what changed, which rows>
+
+## Review
+<written by the final review, never at the start: see "The review" below>
 ```
 
-The sections above are the content to cover; keep the table columns as shown.
+The sections above are the content to cover; keep the table columns as shown and keep
+`## Review` as the last section. Leave Verdict and Evidence empty when you write the rows.
 
 ## Writing the requirements
 
@@ -70,6 +75,17 @@ The sections above are the content to cover; keep the table columns as shown.
 - Do not ask. Choose the interpretation closest to the stated requirement and to Odoo
   conventions, and record it under Assumptions.
 
+## The review
+
+The review gate asks for it when you try to finish. It is recorded in this file, nowhere else:
+
+- **Verdict / Evidence** on every row: `met` or `not met`, and what you ran or read for the
+  review (command and result line, test name, log line, PNG path). Overwrite earlier values.
+- **`## Review` section** (replace the placeholder): `Files reviewed:` with every file changed
+  since `Base:`, the findings table (columns `# | File:line | Defect | Failure scenario | Fix |
+  Guideline section or *judgement* | Status`, or `No findings.`), and a closing
+  `Guidelines read: <files>` line. The gate's message states the exact steps and the bar.
+
 ## Implied requirements in Odoo
 
 After the stated requirements, read the index in `odoo-guidelines/SKILL.md` (and
@@ -84,7 +100,8 @@ Add only what the task touches; an unrelated area is not a requirement.
 ## Keeping it current
 
 - A follow-up prompt changes the file before any code does: edit the affected rows, add new
-  ones, and write a line under Changes. If nothing changed, write that line anyway.
+  ones, clear the Verdict and Evidence of every row you changed or added, and write a line
+  under Changes. If nothing changed, write that line anyway.
 - A correction in the prompt replaces the wrong row. Mark the old one `superseded by #<n>`
   and keep it, so the history stays readable.
 - When you discover an implied requirement mid-task, add a row for it.

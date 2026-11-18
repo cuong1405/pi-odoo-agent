@@ -7,41 +7,44 @@
  * a bloated context gives up ("scope too large", "missing infrastructure") or says "done".
  * Prose in AGENTS.md cannot stop that, and neither can the model's own summary of a long
  * session. Two things work: holding the turn open where the agent tries to stop, and
- * rebuilding the state of the task from FILES and git (not from memory) whenever the context
- * was compacted, so the agent resumes from the highest-priority open item.
+ * rebuilding the state of the task from the FILE and git (not from memory) whenever the
+ * context was compacted, so the agent resumes from the highest-priority open item.
  *
- *  0. Requirements file: the review is measured against `<log dir>/<task>_requirements.md`,
- *     which the agent writes with the odoo-task-requirements skill (the human chooses per
- *     task whether to invoke it). If none exists when the agent tries to finish, the gate
- *     does not run: the agent is sent back once, only to tell the human in its final message
- *     that the requirements file was missing and the work was not reviewed.
+ * One file is the single source of truth: `<log dir>/<task>_requirements.md`, which the agent
+ * writes with the odoo-task-requirements skill. The review is recorded in that same file: a
+ * Verdict and an Evidence cell on every requirement row, and a closing `## Review` section
+ * (files reviewed, findings table, `Guidelines read:` line). There is no separate report.
+ *
+ *  0. If no requirements file exists when the agent tries to finish, the gate does not run:
+ *     the agent is sent back once, only to tell the human in its final message that the file
+ *     was missing and the work was not reviewed.
  *  1. Work in flight: the agent edited code, or wrote a requirements file, in this session
  *     (remembered across /reload and resume through a session entry). When it tries to
  *     finish it is sent to review its own work: load the odoo-review skill NOW (a fresh read
  *     of its SKILL.md after this request), follow ALL of that skill's instructions strictly
- *     (nothing of the skill is restated here), and write `<log dir>/<task>_review.md`.
+ *     (nothing of the skill is restated here), and record the review in the requirements file.
  *  2. Each later attempt to finish is checked against facts the extension can verify,
- *     because the agent writes the report itself and cannot be trusted to grade itself:
+ *     because the agent writes the review itself and cannot be trusted to grade itself:
+ *     - the requirements file was written after the request and has a `## Review` section;
  *     - the skill was read after the request, and every guideline file named on the
  *       `Guidelines read:` line was opened after the request (tracked from read/cat calls and
  *       from `guideline_row` results);
- *     - the requirements file has a `Base:` commit, and every file changed since it
- *       (committed, uncommitted, untracked, in the repos the agent edited) appears in the
- *       report, so the review covers the whole task;
- *     - the report has a verdict table with one row per numbered requirement: every MUST row
- *       is `met` with non-empty evidence, and at least 90% of all rows are (the 90% is the
- *       tolerance for a task text that is not 100% accurate, so it only ever forgives
- *       SHOULD rows);
+ *     - the file has a `Base:` commit, and every file changed since it (committed,
+ *       uncommitted, untracked, in the repos the agent edited) appears in the Review section,
+ *       so the review covers the whole task;
+ *     - every numbered requirement row has Verdict `met` with non-empty evidence for every
+ *       MUST row, and at least 90% of all rows (the 90% is the tolerance for a task text that
+ *       is not 100% accurate, so it only ever forgives SHOULD rows);
  *     - at least 90% of the findings are `fixed` AND name a commit hash that exists in the
  *       repo and is reachable from HEAD.
  *     Otherwise the agent goes back to work on the open items.
  *
- * Every message that sends the agent back has two parts, both computed from files and git:
- *  - Task state: requirements (MUST/SHOULD counts), the review report if one exists (met
- *    count, each unmet MUST with its text and Check, open findings), and per repo the
- *    commits since `Base:` and the uncommitted files.
- *  - Next steps, highest priority first: no report -> write the review; unmet MUSTs; open
- *    findings; the 90% bar; changed files missing from the report; report format problems.
+ * Every message that sends the agent back has two parts, both computed from the file and git:
+ *  - Task state: requirements (MUST/SHOULD counts), the review if it was written (met count,
+ *    each unmet MUST with its text and Check, open findings), and per repo the commits since
+ *    `Base:` and the uncommitted files.
+ *  - Next steps, highest priority first: no review -> write it; unmet MUSTs; open findings;
+ *    the 90% bar; changed files missing from the review; format problems.
  *
  * Compaction. A bloated context is the usual cause of premature exits, so before sending the
  * message the gate compacts the session (`ctx.compact`, from `agent_settled`, with
@@ -55,19 +58,18 @@
  * state + next steps" message with the same content, delivered with the next LLM call
  * (steered into a running turn; stored for the next prompt when Pi is idle).
  *
- * The report is a file so the extension can check its time and format and the agent can
- * re-read it after a compaction. A review with no findings says `No findings.`.
+ * A review with no findings says `No findings.` in the Review section.
  *
  * There is no retry cap and no escape hatch the agent can use: it keeps working until the
  * bar is met, and the human interrupts the session if it is stuck. The one exception is a
  * stalled agent: when the gate has run more than 3 times in a row and no edit/write call (any
- * file, the report included) happened between the runs, the gate lets the agent stop and
- * shows the human a warning with what is still open. A new user prompt starts the review
- * stage again. State that must survive /reload and resume (code edited, requirements file
- * written, repos edited) is stored with `pi.appendEntry` and restored on `session_start`.
+ * file, the requirements file included) happened between the runs, the gate lets the agent
+ * stop and shows the human a warning with what is still open. A new user prompt starts the
+ * review stage again. State that must survive /reload and resume (code edited, requirements
+ * file written, repos edited) is stored with `pi.appendEntry` and restored on `session_start`.
  *
  * Install: copy to ~/.pi/agent/extensions/require-review-gate.ts and run /reload.
- * Env: ODOO_LOG_DIR overrides the report directory (default ~/src/odoo/log);
+ * Env: ODOO_LOG_DIR overrides the log directory (default ~/src/odoo/log);
  *      PI_SKILLS_DIR overrides the skills directory (default ~/.pi/agent/skills);
  *      PI_GATE_COMPACT_TOKENS sets the context size above which the gate compacts
  *      (default: 40% of the model window, clamped to 30k-100k).
@@ -126,7 +128,7 @@ function inputPath(input: Record<string, unknown>): string | undefined {
   return typeof raw === "string" && raw ? raw : undefined;
 }
 
-/** Files that are not "the work": logs and reports, scratch, installed skills. */
+/** Files that are not "the work": logs and the requirements file, scratch, installed skills. */
 function isCodeEdit(abs: string): boolean {
   if (abs.startsWith(LOG_DIR + path.sep)) return false;
   if (abs.startsWith(SKILLS_DIR + path.sep)) return false;
@@ -134,7 +136,7 @@ function isCodeEdit(abs: string): boolean {
   return true;
 }
 
-// ---------------------------------------------------------------- report
+// ---------------------------------------------------------- requirements file
 
 const cells = (line: string) =>
   line
@@ -170,48 +172,103 @@ function parseTables(text: string): Table[] {
 
 const colOf = (t: Table, pred: (name: string) => boolean) => t.header.findIndex(pred);
 
-interface Requirements {
-  file: string;
-  base?: string;
-  rows: { id: string; kind: string; text: string; check: string }[];
+interface Finding {
+  id: string;
+  where: string;
+  fix: string;
+  status: string;
 }
 
-/** Rows of the requirements table (numbered, MUST/SHOULD) and the `Base:` commit. */
-function parseRequirements(file: string): Requirements {
+interface Row {
+  id: string;
+  kind: string; // "must" or "should"
+  text: string;
+  check: string;
+  verdict: string; // "met", "not met" or "" before the review
+  evidence: string;
+}
+
+interface Task {
+  file: string;
+  mtime: number;
+  base?: string;
+  rows: Row[];
+  /** The closing `## Review` section; undefined until the agent has written it. */
+  review?: {
+    text: string;
+    guidelinesLine: string;
+    noFindings: boolean;
+    findings: Finding[];
+  };
+}
+
+/** The `## Review` section: `Guidelines read:` line, `No findings.` and the findings table. */
+function parseReviewSection(text: string): NonNullable<Task["review"]> {
+  const lines = text.split("\n");
+  const gi = lines.findIndex((l) => /^\s*[*_]*guidelines read[*_]*\s*:/i.test(l));
+  let guidelinesLine = "";
+  if (gi >= 0) {
+    for (let i = gi; i < lines.length && (i === gi || lines[i].trim() !== ""); i++) {
+      guidelinesLine += " " + lines[i];
+    }
+    guidelinesLine = guidelinesLine.replace(/^\s*[*_]*guidelines read[*_]*\s*:[*_]*/i, "").trim();
+  }
+  const review = { text, guidelinesLine, noFindings: /\bno findings\b/i.test(text), findings: [] as Finding[] };
+  for (const t of parseTables(text)) {
+    const st = colOf(t, (n) => n === "status");
+    const wh = colOf(t, (n) => n.includes("file"));
+    const fx = colOf(t, (n) => n === "fix");
+    const id = Math.max(0, colOf(t, (n) => n === "#" || n === "id"));
+    if (st < 0 || wh < 0) continue;
+    for (const r of t.rows) {
+      if (!r[st]) continue;
+      review.findings.push({
+        id: r[id] || String(review.findings.length + 1),
+        where: r[wh] || "",
+        fix: fx >= 0 ? r[fx] || "" : "",
+        status: plain(r[st]),
+      });
+    }
+  }
+  return review;
+}
+
+/** Requirement rows (numbered, MUST/SHOULD, with Verdict/Evidence), `Base:` commit, the review. */
+function parseTask(file: string): Task {
   const text = readFileSync(file, "utf8");
   const baseLine = text.match(/^\s*[*_]*base[*_]*\s*:\s*(.+)$/im)?.[1] ?? "";
-  const out: Requirements = {
+  const task: Task = {
     file,
+    mtime: statSync(file).mtimeMs,
     base: baseLine.match(/\b[0-9a-f]{7,40}\b/)?.[0],
     rows: [],
   };
-  for (const t of parseTables(text)) {
+  const at = text.search(/^##\s+review\b/im);
+  for (const t of parseTables(at >= 0 ? text.slice(0, at) : text)) {
     const kind = colOf(t, (n) => n.includes("must"));
     const req = colOf(t, (n) => n.includes("requirement"));
     const chk = colOf(t, (n) => n === "check");
+    const vd = colOf(t, (n) => n === "verdict");
+    const ev = colOf(t, (n) => n.includes("evidence"));
     if (kind < 0 || req < 0) continue;
     for (const r of t.rows) {
       if (!/^\d+$/.test(plain(r[0] ?? ""))) continue;
       if (/superseded/i.test(r.join(" "))) continue;
-      out.rows.push({
+      task.rows.push({
         id: plain(r[0]),
         kind: plain(r[kind] ?? ""),
         text: (r[req] ?? "").trim(),
         check: chk >= 0 ? (r[chk] ?? "").trim() : "",
+        verdict: vd >= 0 ? plain(r[vd] ?? "") : "",
+        evidence: ev >= 0 ? (r[ev] ?? "").trim() : "",
       });
     }
   }
-  return out;
+  if (at >= 0) task.review = parseReviewSection(text.slice(at));
+  return task;
 }
 
-interface Review {
-  file: string;
-  text: string;
-  guidelinesLine: string;
-  noFindings: boolean;
-  findings: { id: string; where: string; fix: string; status: string }[];
-  verdicts: Map<string, { verdict: string; evidence: string }>;
-}
+const isMet = (r: Row) => r.verdict === "met" && r.evidence.length > 0;
 
 function newestLogFileSince(suffix: string, minMtimeMs: number): string | undefined {
   try {
@@ -224,55 +281,6 @@ function newestLogFileSince(suffix: string, minMtimeMs: number): string | undefi
   } catch {
     return undefined;
   }
-}
-
-/** Parse the findings table, the requirements-check table and the `Guidelines read:` line. */
-function parseReview(file: string): Review {
-  const text = readFileSync(file, "utf8");
-  const lines = text.split("\n");
-  const gi = lines.findIndex((l) => /^\s*[*_]*guidelines read[*_]*\s*:/i.test(l));
-  let guidelinesLine = "";
-  if (gi >= 0) {
-    for (let i = gi; i < lines.length && (i === gi || lines[i].trim() !== ""); i++) {
-      guidelinesLine += " " + lines[i];
-    }
-    guidelinesLine = guidelinesLine.replace(/^\s*[*_]*guidelines read[*_]*\s*:[*_]*/i, "").trim();
-  }
-  const review: Review = {
-    file,
-    text,
-    guidelinesLine,
-    noFindings: /\bno findings\b/i.test(text),
-    findings: [],
-    verdicts: new Map(),
-  };
-  for (const t of parseTables(text)) {
-    const st = colOf(t, (n) => n === "status");
-    const wh = colOf(t, (n) => n.includes("file"));
-    const vd = colOf(t, (n) => n === "verdict");
-    const ev = colOf(t, (n) => n.includes("evidence"));
-    const fx = colOf(t, (n) => n === "fix");
-    const id = Math.max(0, colOf(t, (n) => n === "#" || n === "id"));
-    if (st >= 0 && wh >= 0) {
-      for (const r of t.rows) {
-        if (!r[st]) continue;
-        review.findings.push({
-          id: r[id] || String(review.findings.length + 1),
-          where: r[wh] || "",
-          fix: fx >= 0 ? r[fx] || "" : "",
-          status: plain(r[st]),
-        });
-      }
-    } else if (vd >= 0) {
-      for (const r of t.rows) {
-        review.verdicts.set(plain(r[id] ?? ""), {
-          verdict: plain(r[vd] ?? ""),
-          evidence: (ev >= 0 ? r[ev] : "") ?? "",
-        });
-      }
-    }
-  }
-  return review;
 }
 
 // ------------------------------------------------------------------ git
@@ -328,31 +336,30 @@ function reviewRequest(requirementsFile: string): string {
     `only its numbered process. Work from the skill itself, not from memory or from this ` +
     `message. Its sibling guideline files must be opened again for this review.\n` +
     `   b. Scope: the whole task, from the \`Base:\` commit in ${requirementsFile} to HEAD, ` +
-    `plus uncommitted and untracked files. Every changed file must appear in your report ` +
+    `plus uncommitted and untracked files. Every changed file must be listed in your review ` +
     `(the skill's Map step).\n` +
     `   c. Check every requirement in ${requirementsFile}. Run its Check yourself now; do not ` +
-    `mark anything met from memory or from an earlier run. In the report, a table with one ` +
-    `row per requirement number:\n` +
-    `      | # | Verdict | Evidence |\n` +
-    `      Verdict is \`met\` or \`not met\`. Evidence is what you ran or read for this ` +
-    `review (command and result line, test name, log line, PNG path), never a claim. Every ` +
-    `MUST requirement must be \`met\`, and at least ${MIN_MET_RATIO * 100}% of all ` +
-    `requirements (SHOULD included).\n` +
-    `   d. Findings, in the skill's report format, as a table with exactly these columns ` +
+    `mark anything met from memory or from an earlier run. In the requirements table of that ` +
+    `file, fill in for every row (overwrite earlier values) the Verdict cell, \`met\` or ` +
+    `\`not met\`, and the Evidence cell: what you ran or read for this review (command and ` +
+    `result line, test name, log line, PNG path), never a claim. Every MUST requirement must ` +
+    `be \`met\`, and at least ${MIN_MET_RATIO * 100}% of all requirements (SHOULD included).\n` +
+    `   d. Record the review in the same file, as a \`## Review\` section at the END of it (the ` +
+    `only place the review is written: no separate report file), with:\n` +
+    `      Files reviewed: <every changed file>\n` +
+    `      the findings, in the skill's report format, as a table with exactly these columns ` +
     `(the skill's finding fields plus Status)\n` +
     `      | # | File:line | Defect | Failure scenario | Fix | Guideline section or *judgement* | Status |\n` +
     `      A finding is a defect in the code or a gap against a requirement, not a ` +
     `description of what you changed. A weakened test, relaxed threshold or shortfall against ` +
     `a requirement is a finding even if you believe it is justified. Status starts as ` +
     `\`open\`. With no findings, write \`No findings.\` instead of the table.\n` +
-    `   e. Keep the skill's closing \`Guidelines read:\` line, listing the guideline files you ` +
-    `opened for this review (for example odoo-guidelines/python.md); each must have been ` +
-    `opened after this request.\n` +
-    `   f. Write the report to ${LOG_DIR}/<task>_review.md. Fix every finding you can (with a test ` +
-    `that covers it) and commit; set Status to \`fixed\` and put ` +
-    `the commit hash in the Fix cell. Leave an ambiguous one \`flagged\` with the reason in ` +
-    `its Fix cell. At least ${MIN_FIXED_RATIO * 100}% of the findings must be \`fixed\` with ` +
-    `a commit that exists in the repository.`
+    `      Guidelines read: <the guideline files you opened for this review, for example ` +
+    `odoo-guidelines/python.md; each must have been opened after this request>\n` +
+    `   e. Fix every finding you can (with a test that covers it) and commit; set Status to ` +
+    `\`fixed\` and put the commit hash in the Fix cell. Leave an ambiguous one \`flagged\` with ` +
+    `the reason in its Fix cell. At least ${MIN_FIXED_RATIO * 100}% of the findings must be ` +
+    `\`fixed\` with a commit that exists in the repository.`
   );
 }
 
@@ -377,19 +384,22 @@ function list(items: string[], cap = 25): string {
 
 /**
  * What is wrong with the review, most urgent first: work on the task itself (unmet MUSTs, open
- * findings, the 90% bar), then the files the report misses, then problems of the report's
- * format. With no report at all the one step is to write it.
+ * findings, the 90% bar), then the files the review misses, then problems of its format. With
+ * no review written since the request the one step is to write it.
  */
 function reviewProblems(c: ReviewContext): Problem[] {
   const problems: Problem[] = [];
   const add = (priority: number, text: string) => problems.push({ priority, text });
-  const file = newestLogFileSince("_review.md", c.requestTime);
-  if (!file) {
+  const file = c.requirementsFile;
+  const task = parseTask(file);
+  const review = task.review;
+  if (!review || task.mtime < c.requestTime) {
     add(
       0,
-      `No review report written since the review was requested: write ` +
-        `${LOG_DIR}/<task>_review.md (requirements table, findings table, closing ` +
-        `\`Guidelines read:\` line).`,
+      `The review is not recorded in ${file} since it was requested: fill in the Verdict and ` +
+        `Evidence cells of the requirements table and add the closing \`## Review\` section ` +
+        `(Files reviewed, findings table or \`No findings.\`, \`Guidelines read:\` line). ` +
+        `Do not write a separate report file.`,
     );
     if (!c.skillReadAfterRequest) {
       add(0, `Open ${REVIEW_SKILL_MD} with the read tool first, then review per all of its instructions.`);
@@ -403,11 +413,10 @@ function reviewProblems(c: ReviewContext): Problem[] {
         `${REVIEW_SKILL_MD} with the read tool, then review per all of its instructions.`,
     );
   }
-  const review = parseReview(file);
 
   const claimed = [...new Set(review.guidelinesLine.match(/[\w.-]+\.md\b/g) ?? [])];
   if (!review.guidelinesLine) {
-    add(5, `${file} has no closing \`Guidelines read: <files>\` line.`);
+    add(5, `The \`## Review\` section of ${file} has no closing \`Guidelines read: <files>\` line.`);
   } else if (claimed.length === 0) {
     add(5, `The \`Guidelines read:\` line names no guideline file (for example odoo-guidelines/python.md).`);
   } else {
@@ -422,67 +431,66 @@ function reviewProblems(c: ReviewContext): Problem[] {
     }
   }
 
-  const req = parseRequirements(c.requirementsFile);
-  if (req.rows.length === 0) {
+  if (task.rows.length === 0) {
     add(
       5,
-      `${c.requirementsFile} has no numbered requirement rows (table with # | Requirement | ` +
-        `MUST/SHOULD columns, as the odoo-task-requirements skill writes it).`,
+      `${file} has no numbered requirement rows (table with # | Requirement | MUST/SHOULD ` +
+        `columns, as the odoo-task-requirements skill writes it).`,
     );
   } else {
-    const notMet = req.rows.filter((r) => {
-      const v = review.verdicts.get(r.id);
-      return !(v && v.verdict === "met" && v.evidence.trim().length > 0);
-    });
-    const label = (r: { id: string; kind: string }) => `#${r.id} ${r.kind.toUpperCase()}`;
+    const notMet = task.rows.filter((r) => !isMet(r));
+    const label = (r: Row) => `#${r.id} ${r.kind.toUpperCase()}`;
     const mustNotMet = notMet.filter((r) => r.kind === "must");
     if (mustNotMet.length) {
       add(
         1,
-        `Every MUST requirement must be \`met\` with evidence. Not met or missing from the ` +
-          `report's requirements table: ${list(mustNotMet.map(label))}. Work on them, re-run ` +
-          `their Check, and update the table in ${file}.`,
+        `Every MUST requirement must have Verdict \`met\` with Evidence. Not met or not filled ` +
+          `in: ${list(mustNotMet.map(label))}. Work on them, re-run their Check, and update the ` +
+          `Verdict and Evidence cells in ${file}.`,
       );
     }
-    const met = req.rows.length - notMet.length;
-    const ratio = met / req.rows.length;
+    const met = task.rows.length - notMet.length;
+    const ratio = met / task.rows.length;
     if (ratio < MIN_MET_RATIO) {
       add(
         3,
-        `Only ${met}/${req.rows.length} requirements are \`met\` with evidence ` +
+        `Only ${met}/${task.rows.length} requirements are \`met\` with evidence ` +
           `(${Math.round(ratio * 100)}%, need at least ${MIN_MET_RATIO * 100}% overall, SHOULD ` +
-          `rows included). Not met or missing: ${list(notMet.map(label))}.`,
+          `rows included). Not met or not filled in: ${list(notMet.map(label))}.`,
       );
     }
   }
 
-  if (!req.base) {
+  if (!task.base) {
     add(
       5,
-      `${c.requirementsFile} has no \`Base: <branch>, <commit>\` line, so the review scope cannot ` +
+      `${file} has no \`Base: <branch>, <commit>\` line, so the review scope cannot ` +
         `be checked. Add it (the commit the task started from).`,
     );
   } else {
-    const unmapped = changedSince(c.roots, req.base)
+    const unmapped = changedSince(c.roots, task.base)
       .filter((f) => !review.text.includes(f.file))
       .map((f) => f.file);
     if (unmapped.length) {
       add(
         4,
-        `The report does not mention ${unmapped.length} file(s) changed since ${req.base}: ` +
-          `${list(unmapped)}. Map and review every changed file.`,
+        `The \`## Review\` section does not mention ${unmapped.length} file(s) changed since ` +
+          `${task.base}: ${list(unmapped)}. Map and review every changed file.`,
       );
     }
   }
 
   if (review.findings.length === 0) {
     if (!review.noFindings) {
-      add(5, `${file} has no findings table (columns File:line and Status) and does not say \`No findings.\``);
+      add(
+        5,
+        `The \`## Review\` section has no findings table (columns File:line and Status) and does ` +
+          `not say \`No findings.\``,
+      );
     }
     return problems.sort((x, y) => x.priority - y.priority);
   }
-  const isFixed = (f: Review["findings"][number]) =>
-    f.status === "fixed" && hasRealCommit(f.fix, c.roots);
+  const isFixed = (f: Finding) => f.status === "fixed" && hasRealCommit(f.fix, c.roots);
   const fixed = review.findings.filter(isFixed).length;
   const ratio = fixed / review.findings.length;
   if (ratio < MIN_FIXED_RATIO) {
@@ -503,30 +511,30 @@ function reviewProblems(c: ReviewContext): Problem[] {
 // ------------------------------------------------------- task state
 
 interface Snapshot {
-  text: string; // facts, read from files and git
+  text: string; // facts, read from the file and git
   steps: string[]; // what to do next, most urgent first
 }
 
 /**
- * Where the task stands, rebuilt from the requirements file, the review report (if one was
- * written since `reviewSince`) and git, never from the conversation: it must hold after a
- * compaction, a /reload or a resume.
+ * Where the task stands, rebuilt from the requirements file (which holds the review once it
+ * was written, if the file was written since `reviewSince`) and git, never from the
+ * conversation: it must hold after a compaction, a /reload or a resume.
  */
 function snapshot(c: { requirementsFile: string; roots: Set<string>; reviewSince: number }): Snapshot {
-  const req = parseRequirements(c.requirementsFile);
-  const must = req.rows.filter((r) => r.kind === "must");
+  const task = parseTask(c.requirementsFile);
+  const must = task.rows.filter((r) => r.kind === "must");
   const lines = [
-    `Task state (read from files and git, not from memory):`,
-    `- Requirements, ${c.requirementsFile}: ${req.rows.length} rows (${must.length} MUST, ` +
-      `${req.rows.length - must.length} SHOULD)${req.base ? `, Base ${req.base}` : ""}.`,
+    `Task state (read from the requirements file and git, not from memory):`,
+    `- Requirements, ${c.requirementsFile}: ${task.rows.length} rows (${must.length} MUST, ` +
+      `${task.rows.length - must.length} SHOULD)${task.base ? `, Base ${task.base}` : ""}.`,
   ];
   const steps: string[] = [];
-  const reqLine = (r: Requirements["rows"][number]) =>
+  const reqLine = (r: Row) =>
     `#${r.id} ${r.kind.toUpperCase()}: ${clip(r.text, 140)}${r.check ? ` (Check: ${clip(r.check, 100)})` : ""}`;
 
-  const reportFile = newestLogFileSince("_review.md", c.reviewSince);
-  if (!reportFile) {
-    lines.push(`- Review report: none yet, so no requirement is verified.`);
+  const review = task.review;
+  if (!review || task.mtime < c.reviewSince) {
+    lines.push(`- Review: not recorded yet, so no requirement is verified.`);
     if (must.length) {
       lines.push(`- MUST requirements to deliver:\n` + must.slice(0, 12).map((r) => `    ${reqLine(r)}`).join("\n"));
       if (must.length > 12) lines.push(`    ... (+${must.length - 12} more in the requirements file)`);
@@ -537,22 +545,18 @@ function snapshot(c: { requirementsFile: string; roots: Set<string>; reviewSince
     );
     steps.push(`When all are done, finish: the review gate then asks for the review of the whole task.`);
   } else {
-    const review = parseReview(reportFile);
-    const unmet = req.rows.filter((r) => {
-      const v = review.verdicts.get(r.id);
-      return !(v && v.verdict === "met" && v.evidence.trim().length > 0);
-    });
+    const unmet = task.rows.filter((r) => !isMet(r));
     const unmetMust = unmet.filter((r) => r.kind === "must");
     const fixed = review.findings.filter((f) => f.status === "fixed" && hasRealCommit(f.fix, c.roots));
     const open = review.findings.filter((f) => !fixed.includes(f));
     lines.push(
-      `- Review report, ${reportFile}: ${req.rows.length - unmet.length}/${req.rows.length} ` +
+      `- Review, in the same file: ${task.rows.length - unmet.length}/${task.rows.length} ` +
         `requirements met, ${fixed.length}/${review.findings.length} findings fixed with a commit.`,
     );
     if (unmetMust.length) {
       lines.push(`- MUST requirements not met:\n` + unmetMust.slice(0, 8).map((r) => `    ${reqLine(r)}`).join("\n"));
       if (unmetMust.length > 8) lines.push(`    ... (+${unmetMust.length - 8} more)`);
-      steps.push(`Make the unmet MUST requirements pass, re-run each Check, update the report.`);
+      steps.push(`Make the unmet MUST requirements pass, re-run each Check, update Verdict and Evidence.`);
     }
     if (open.length) {
       lines.push(
@@ -563,18 +567,18 @@ function snapshot(c: { requirementsFile: string; roots: Set<string>; reviewSince
       steps.push(`Fix the open findings (with a test that covers each), commit, put the hash in the Fix cell.`);
     }
     const unmetShould = unmet.filter((r) => r.kind !== "must");
-    if (!unmetMust.length && unmetShould.length && (req.rows.length - unmet.length) / req.rows.length < MIN_MET_RATIO) {
+    if (!unmetMust.length && unmetShould.length && (task.rows.length - unmet.length) / task.rows.length < MIN_MET_RATIO) {
       steps.push(`Meet enough SHOULD requirements to reach ${MIN_MET_RATIO * 100}% overall.`);
     }
-    if (req.base) {
-      const unmapped = changedSince(c.roots, req.base).filter((f) => !review.text.includes(f.file));
-      if (unmapped.length) steps.push(`Add the ${unmapped.length} changed file(s) missing from the report: ${list(unmapped.map((f) => f.file), 6)}.`);
+    if (task.base) {
+      const unmapped = changedSince(c.roots, task.base).filter((f) => !review.text.includes(f.file));
+      if (unmapped.length) steps.push(`Add the ${unmapped.length} changed file(s) missing from the Review section: ${list(unmapped.map((f) => f.file), 6)}.`);
     }
     if (!steps.length) steps.push(`Try to finish: the review bar looks met.`);
   }
 
   for (const root of c.roots) {
-    const base = req.base;
+    const base = task.base;
     if (!base || git(root, ["cat-file", "-e", `${base}^{commit}`]) === undefined) continue;
     const commits = (git(root, ["rev-list", "--count", `${base}..HEAD`]) ?? "?").trim();
     const dirty = (git(root, ["status", "--porcelain"]) ?? "").split("\n").filter(Boolean);
@@ -609,7 +613,7 @@ export default function (pi: ExtensionAPI) {
   let skillSeq = 0; // last time odoo-review/SKILL.md was opened
   let nudges = 0; // only numbers the messages
   let missingReported = false;
-  let lastAnyEdit = 0; // any edit/write call, whatever the file (the report counts)
+  let lastAnyEdit = 0; // any edit/write call, whatever the file (the requirements file counts)
   let editSnapshot = -1; // lastAnyEdit at the previous gate run; -1 = no run yet
   let outbox: { content: string; isRequest: boolean } | undefined; // sent after a compaction
   let gateCompacting = false; // the compaction in progress was started by the gate
@@ -779,13 +783,18 @@ export default function (pi: ExtensionAPI) {
     }
     nudges++;
 
-    const state = snapshot({ requirementsFile, roots, reviewSince: isRequest ? promptTime : requestTime });
+    // Before the request, whatever review the file holds is from an earlier prompt: show none.
+    const state = snapshot({
+      requirementsFile,
+      roots,
+      reviewSince: isRequest ? Number.POSITIVE_INFINITY : requestTime,
+    });
     const content = isRequest
       ? `Review gate: you are about to finish.\n\n${state.text}\n\n${problems[0].text}`
       : `Review gate: you are not done yet (check #${nudges}).\n\n${state.text}\n\n` +
         `Next steps, highest priority first:\n${numbered(problems.map((p) => p.text))}\n\n` +
         `Do not report completion until the review bar is met. If something blocks you, ` +
-        `record it in the report, try another approach, and keep working on the rest.`;
+        `record it in the requirements file, try another approach, and keep working on the rest.`;
     outbox = { content, isRequest };
     return undefined;
   });

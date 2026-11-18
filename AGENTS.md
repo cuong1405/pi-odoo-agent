@@ -209,16 +209,18 @@ Time is not a constraint, thoroughness is: spend it on verification, not on aski
 ### Task requirements
 For a larger task the human has you use the `odoo-task-requirements` skill: load it first and
 write `~/src/odoo/log/<task>_requirements.md` before any code, then update it on every
-follow-up prompt. The review gate below needs that file. If it does not exist when you try to
-finish, the gate does not run: tell the human plainly in your final message that the
-requirements file was missing and the work was not reviewed, and stop.
+follow-up prompt. It is the single source of truth for the task: the requirements, and later
+the review (Verdict and Evidence per row, a closing `## Review` section); there is no separate
+report file. The review gate below needs it. If it does not exist when you try to finish, the
+gate does not run: tell the human plainly in your final message that the requirements file
+was missing and the work was not reviewed, and stop.
 
 ### Finishing: the review gate
 When you try to finish after editing code or writing a requirements file, the
 `require-review-gate` extension holds the turn open until you have reviewed your own work with
 the `odoo-review` skill against your requirements file and fixed what the review found. Its
-message gives the exact steps and the report format (`~/src/odoo/log/<task>_review.md`). It
-opens with the task state read from the requirements file, the report and git, and ends with
+message gives the exact steps and says how to record the review in the requirements file. It
+opens with the task state read from that file and git, and ends with
 next steps in priority order; any compaction of the session is followed by the same state, so
 resume from it and from the files, not from the summary. The bar: every MUST requirement met,
 at least 90% of all requirements met, at least 90% of the findings fixed with a commit that
