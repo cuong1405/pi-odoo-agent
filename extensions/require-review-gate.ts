@@ -48,10 +48,10 @@
  *
  * Compaction. A bloated context is the usual cause of premature exits, so before sending the
  * message the gate compacts the session (`ctx.compact`, from `agent_settled`, with
- * instructions that keep the requirement ids and the open problems), but only when the
- * context is above `compactThreshold()` (40% of the model's window, between 30k and 100k
- * tokens; PI_GATE_COMPACT_TOKENS overrides), because a summary of a small context only costs a
- * model call. The message is then sent as a custom message that
+ * instructions that keep the requirement ids and the open problems), every time and whatever
+ * the context size: the gate's message starts a new phase (review, then each fix round), and
+ * the files and git hold the state, so the summary only has to drop the noise of the phase
+ * before. The message is then sent as a custom message that
  * starts a new turn (not a user prompt, so the review stage is not restarted). If compaction
  * fails or has nothing to do, the message is sent anyway.
  * Any other compaction (the human's /compact, Pi's automatic one) is followed by a "task
@@ -70,9 +70,7 @@
  *
  * Install: copy to ~/.pi/agent/extensions/require-review-gate.ts and run /reload.
  * Env: ODOO_LOG_DIR overrides the log directory (default ~/src/odoo/log);
- *      PI_SKILLS_DIR overrides the skills directory (default ~/.pi/agent/skills);
- *      PI_GATE_COMPACT_TOKENS sets the context size above which the gate compacts
- *      (default: 40% of the model window, clamped to 30k-100k).
+ *      PI_SKILLS_DIR overrides the skills directory (default ~/.pi/agent/skills).
  */
 
 import { execFileSync } from "node:child_process";
@@ -84,24 +82,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const MIN_FIXED_RATIO = 0.9;
 const MIN_MET_RATIO = 0.9;
 const MAX_IDLE_RUNS = 3;
-const COMPACT_TOKENS_ENV = Number(process.env.PI_GATE_COMPACT_TOKENS) || 0;
-const COMPACT_WINDOW_FRACTION = 0.4;
-const COMPACT_FLOOR = 30_000;
-const COMPACT_CAP = 100_000;
-
-/**
- * The context size above which the gate compacts. Models stop working reliably well before
- * their advertised window (long-context benchmarks and agent-compaction practice put the
- * useful part at roughly half of it, and compacting at 40-60% of the window is the usual
- * advice), and a bigger window does not make a long agent run better, so: 40% of the model's
- * window, never below 30k (a summary of a small context only costs a call) and never above
- * 100k (a 1M window is not a reason to wait for 400k). PI_GATE_COMPACT_TOKENS overrides it.
- */
-function compactThreshold(contextWindow?: number): number {
-  if (COMPACT_TOKENS_ENV) return COMPACT_TOKENS_ENV;
-  if (!contextWindow) return 40_000;
-  return Math.min(COMPACT_CAP, Math.max(COMPACT_FLOOR, Math.round(contextWindow * COMPACT_WINDOW_FRACTION)));
-}
 const COMPACT_INSTRUCTIONS =
   "Checkpoint of a long Odoo task. Keep: the task and the path of its requirements file " +
   "(<task>_requirements.md) with its Base commit, the numbers of the requirements still not " +
@@ -816,11 +796,6 @@ export default function (pi: ExtensionAPI) {
         { triggerTurn: true },
       );
     };
-    const usage = ctx.getContextUsage?.();
-    if (usage?.tokens != null && usage.tokens < compactThreshold(usage.contextWindow)) {
-      send();
-      return;
-    }
     gateCompacting = true;
     try {
       ctx.compact({
