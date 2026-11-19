@@ -48,10 +48,9 @@
  *
  * Compaction. A bloated context is the usual cause of premature exits, so before sending the
  * message the gate compacts the session (`ctx.compact`, from `agent_settled`, with
- * instructions that keep the requirement ids and the open problems), every time and whatever
- * the context size: the gate's message starts a new phase (review, then each fix round), and
- * the files and git hold the state, so the summary only has to drop the noise of the phase
- * before. The message is then sent as a custom message that
+ * instructions that keep the requirement ids and the open problems), but only when the
+ * context is above COMPACT_TOKENS (51k, 40% of a 128k window), because a summary of a small
+ * context only costs a model call. The message is then sent as a custom message that
  * starts a new turn (not a user prompt, so the review stage is not restarted). If compaction
  * fails or has nothing to do, the message is sent anyway.
  * Any other compaction (the human's /compact, Pi's automatic one) is followed by a "task
@@ -82,6 +81,12 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const MIN_FIXED_RATIO = 0.9;
 const MIN_MET_RATIO = 0.9;
 const MAX_IDLE_RUNS = 3;
+/**
+ * Context size (tokens) above which the gate compacts: 40% of a 128k window. Models stop
+ * working reliably well before their advertised window, so the number is fixed instead of
+ * scaling with it, and a summary of a smaller context only costs a model call.
+ */
+const COMPACT_TOKENS = 51_000;
 const COMPACT_INSTRUCTIONS =
   "Checkpoint of a long Odoo task. Keep: the task and the path of its requirements file " +
   "(<task>_requirements.md) with its Base commit, the numbers of the requirements still not " +
@@ -796,6 +801,11 @@ export default function (pi: ExtensionAPI) {
         { triggerTurn: true },
       );
     };
+    const usage = ctx.getContextUsage?.();
+    if (usage?.tokens != null && usage.tokens < COMPACT_TOKENS) {
+      send();
+      return;
+    }
     gateCompacting = true;
     try {
       ctx.compact({
