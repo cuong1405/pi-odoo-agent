@@ -28,10 +28,14 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /** [provider, modelId] in priority order. Edit to taste; entries must accept image input. */
 const DEFAULT_CHAIN: Array<[string, string]> = [
-  ["kilo", "nvidia/nemotron-3.5-super-vl:free"],
+  // Tier 1: Gemma 4 31B, then 26B A4B (same family, via kilo, then the other providers).
+  ["kilo", "google/gemma-4-31b-it:free"],
+  ["kilo", "google/gemma-4-26b-a4b-it:free"],
   ["cline", "google/gemma-4-31b-it:free"],
-  ["kilo", "thinkingmachines/inkling-2-small:free"],
   ["fastrouter", "google/gemma4-26b:free"],
+  // Tier 3 (weak, last resort only).
+  ["kilo", "thinkingmachines/inkling-2-small:free"],
+  ["kilo", "nvidia/nemotron-3.5-super-vl:free"],
 ];
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
