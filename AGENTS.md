@@ -10,14 +10,19 @@ construct before guessing.
 Skills live in `~/.pi/agent/skills/<skill>/`. A relative link inside a guideline (`tests.md`)
 is relative to that skill's directory: `~/.pi/agent/skills/odoo-guidelines/guidelines/tests.md`.
 
-- **Edits and writes of addon code are gated** by the `require-skill-reads` extension. Walk
-  the guideline index in your system prompt (`odoo_guideline_index`; rows `G*` for everything
-  outside `static/`, `W*` for `static/src` and `static/tests`): one `guideline_row` call per
-  row, all in one message, then in the next message one `guideline_check` call first and your
-  edits after it. Quotes are verified, and a `complies: false` check needs a `fix` that the
-  edit must contain. Every batch of edits needs a new walk, even if you walked a moment ago.
-  If you edit first, the block message shows the rows and repeats the steps. You never open
-  the `SKILL.md` of these two skills.
+- **Edits of addon code are gated** (the `edit` tool; `write` is not) by the
+  `require-skill-reads` extension. Compare your change with the `Read it when` column of the
+  guideline index in your system prompt (`odoo_guideline_index`; rows `G*` for everything
+  outside `static/`, `W*` for `static/src` and `static/tests`) and call `guideline_match` once
+  with every row that matches: several can match, none is allowed. Its result is each row's
+  guideline section. In the next message send one `guideline_check` first (an entry per matching
+  row, each quoting one rule verbatim from its section) and your `edit` calls after it. The
+  extension also matches rows by file path (`views/`, `security/`, `tests/`, `__manifest__.py`,
+  ...) and requires those too. Quotes are verified, and a `complies: false` entry needs a `fix`
+  that the edit must contain. The match stays valid for later edits, but every batch of edits
+  needs its own `guideline_check`; call `guideline_match` again when your next edit is a
+  different kind of change. If you edit first, the block message shows the index and repeats the
+  steps. You never open the `SKILL.md` of these two skills.
 - Change files with `edit`/`write` only; shell edits (`sed -i`, redirects, `tee`, inline
   `python -c`) are blocked. If a change is too complex for those tools, as a last resort write
   a script under `/tmp` with `write` and run it.

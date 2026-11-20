@@ -28,7 +28,7 @@
  *     - the requirements file was written after the request and has a `## Review` section;
  *     - the skill was read after the request, and every guideline file named on the
  *       `Guidelines read:` line was opened after the request (tracked from read/cat calls and
- *       from `guideline_row` results);
+ *       from `guideline_match` results);
  *     - the file has a `Base:` commit, and every file changed since it (committed,
  *       uncommitted, untracked, in the repos the agent edited) appears in the Review section,
  *       so the review covers the whole task;
@@ -659,9 +659,9 @@ export default function (pi: ExtensionAPI) {
   };
 
   pi.on("tool_result", async (event) => {
-    if (event.toolName !== "guideline_row" || event.isError) return undefined;
-    const file = (event.details as { file?: unknown } | undefined)?.file;
-    if (typeof file === "string") noteSkillRead(file);
+    if (event.toolName !== "guideline_match" || event.isError) return undefined;
+    const files = (event.details as { files?: unknown } | undefined)?.files;
+    if (Array.isArray(files)) for (const file of files) if (typeof file === "string") noteSkillRead(file);
     return undefined;
   });
 
