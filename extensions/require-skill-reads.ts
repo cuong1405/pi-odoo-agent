@@ -559,6 +559,13 @@ export default function (pi: ExtensionAPI) {
         problems.push(`${at}: path is missing.`);
         return;
       }
+      if (!/^(\/|~(\/|$))/.test(e.path)) {
+        problems.push(
+          `${at}: path "${e.path}" is not absolute. A relative path resolves against Pi's working ` +
+            `directory (${cwd}), not your module. Use the absolute path (/... or ~/...) your edit uses.`,
+        );
+        return;
+      }
       const fix = typeof e?.fix === "string" ? e.fix : "";
       if (e?.complies !== true && norm(fix).length < 8) {
         problems.push(
@@ -687,7 +694,7 @@ export default function (pi: ExtensionAPI) {
       checks: Type.Array(
         Type.Object({
           row: Type.String({ description: 'The row id whose section the rule comes from, such as "G5".' }),
-          path: Type.String({ description: "The file the edit touches." }),
+          path: Type.String({ description: "The absolute path (/... or ~/...) of the file the edit touches." }),
           rule: Type.String({
             description: "One rule copied verbatim from that row's section; it is verified.",
           }),

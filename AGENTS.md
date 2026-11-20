@@ -8,7 +8,7 @@ construct before guessing.
 ## Skills
 
 Skills live in `~/.pi/agent/skills/<skill>/`. A relative link inside a guideline (`tests.md`)
-is relative to that skill's directory: `~/.pi/agent/skills/odoo-guidelines/guidelines/tests.md`.
+is relative to the guideline file that holds it: `~/.pi/agent/skills/odoo-guidelines/guidelines/tests.md`.
 
 - **Edits of addon code are gated** (the `edit` tool; `write` is not) by the
   `require-skill-reads` extension. Compare your change with the `Read it when` column of the
@@ -177,7 +177,7 @@ Honesty rules:
   ```python
   with self.assertRaises(AccessError, msg=(
       f"{self.user_b.login} must not read {rec.display_name}: expected AccessError. "
-      f"Look at: ir.model.access.csv line for {rec._name} and record rule <xmlid>. "
+      f"Look at: ir.access.csv line for {rec._name} and record rule <xmlid>. "
       f"Likely: rule domain too permissive or group missing.")):
       rec.with_user(self.user_b).read(['name'])
   ```
