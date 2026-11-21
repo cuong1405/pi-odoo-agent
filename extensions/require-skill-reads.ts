@@ -86,7 +86,13 @@ const WEB_SKILL = "odoo-web-guidelines";
 /** [provider, modelId] in priority order; entries must be able to follow a JSON-only prompt. */
 const DEFAULT_CHAIN: Array<[string, string]> = [["kilo", "kilo-auto/free"]];
 const PER_MODEL_TIMEOUT_MS = 180_000;
-const MAX_OUTPUT_TOKENS = 8192;
+/**
+ * Reasoning effort per request. `kilo-auto` may route to a reasoning model that spends its whole
+ * output allowance thinking (stopReason=length, no text), so the first request asks for little
+ * reasoning (it also keeps the wait short) and a request that still runs out is retried once
+ * with the least. The output limit is the model's own maximum, never a number of ours.
+ */
+const EFFORTS = ["low", "minimal"];
 
 const MAX_ROUNDS = (() => {
   const raw = process.env.PI_GUIDELINE_REVIEW_MAX_ROUNDS;
@@ -99,7 +105,6 @@ const WINDOW_LINES = 12; // else: this many lines around each replaced text
 const MAX_CONTEXT_CHARS = 12000; // shown current content, per file
 const MAX_CHANGE_CHARS = 30000; // shown proposed change, per file
 const MAX_LISTING = 150; // addon files listed for context
-
 function parseChain(): Array<[string, string]> {
   const raw = process.env.PI_GUIDELINE_REVIEW_MODELS?.trim();
   if (!raw) return DEFAULT_CHAIN;
@@ -552,7 +557,10 @@ type ReviewResult =
   | { ok: true; model: string; byFile: Map<string, Finding[]>; dropped: string[] }
   | { ok: false; failures: string[] };
 
-/** One stateless completion in a fresh context; the reply text, or an error. */
+/**
+ * One stateless completion in a fresh context; the reply text, or an error. A request that runs
+ * out of output tokens (a reasoning model thinking too long) is retried once with less reasoning.
+ */
 async function ask(
   ctx: any,
   model: any,
@@ -562,32 +570,36 @@ async function ask(
 ): Promise<string> {
   const timeout = AbortSignal.timeout(PER_MODEL_TIMEOUT_MS);
   const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  const context = {
+    systemPrompt: system,
+    messages: [{ role: "user", content: [{ type: "text", text: user }], timestamp: Date.now() }],
+  };
+  const limit = typeof model.maxTokens === "number" && model.maxTokens > 0 ? { maxTokens: model.maxTokens } : {};
   let result: any;
-  try {
-    result = await ctx.modelRegistry.complete(
-      model,
-      {
-        systemPrompt: system,
-        messages: [{ role: "user", content: [{ type: "text", text: user }], timestamp: Date.now() }],
-      },
-      { signal: requestSignal, maxTokens: MAX_OUTPUT_TOKENS },
-    );
-  } catch (error) {
+  for (const reasoning of EFFORTS) {
+    try {
+      result = await ctx.modelRegistry
+        .streamSimple(model, context, { signal: requestSignal, reasoning, ...limit })
+        .result();
+    } catch (error) {
+      if (signal?.aborted) throw new Error("aborted by the user");
+      throw new Error(timeout.aborted ? `timed out after ${PER_MODEL_TIMEOUT_MS / 1000}s` : errorText(error));
+    }
     if (signal?.aborted) throw new Error("aborted by the user");
-    throw new Error(timeout.aborted ? `timed out after ${PER_MODEL_TIMEOUT_MS / 1000}s` : errorText(error));
+    if (result.stopReason !== "length") break;
   }
-  if (signal?.aborted) throw new Error("aborted by the user");
   if (result.stopReason === "error" || result.stopReason === "aborted") {
     throw new Error(result.errorMessage ?? `stopReason=${result.stopReason}`);
+  }
+  if (result.stopReason === "length") {
+    throw new Error("ran out of output tokens at the model's own limit (reasoning or reply too long)");
   }
   const text = (result.content ?? [])
     .filter((b: any) => b.type === "text")
     .map((b: any) => b.text)
     .join("\n")
     .trim();
-  if (!text) {
-    throw new Error(`empty answer (stopReason=${result.stopReason}; the model may have spent its token budget on reasoning)`);
-  }
+  if (!text) throw new Error(`empty answer (stopReason=${result.stopReason})`);
   return text;
 }
 
