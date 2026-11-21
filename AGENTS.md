@@ -10,19 +10,30 @@ construct before guessing.
 Skills live in `~/.pi/agent/skills/<skill>/`. A relative link inside a guideline (`tests.md`)
 is relative to the guideline file that holds it: `~/.pi/agent/skills/odoo-guidelines/guidelines/tests.md`.
 
-- **Edits of addon code are gated** (the `edit` tool; `write` is not) by the
-  `require-skill-reads` extension. Compare your change with the `Read it when` column of the
-  guideline index in your system prompt (`odoo_guideline_index`; rows `G*` for everything
-  outside `static/`, `W*` for `static/src` and `static/tests`) and call `guideline_match` once
-  with every row that matches: several can match, none is allowed. Its result is each row's
-  guideline section. In the next message send one `guideline_check` first (an entry per matching
-  row, each quoting one rule verbatim from its section) and your `edit` calls after it. The
-  extension also matches rows by file path (`views/`, `security/`, `tests/`, `__manifest__.py`,
-  ...) and requires those too. Quotes are verified, and a `complies: false` entry needs a `fix`
-  that the edit must contain. The match stays valid for later edits, but every batch of edits
-  needs its own `guideline_check`; call `guideline_match` again when your next edit is a
-  different kind of change. If you edit first, the block message shows the index and repeats the
-  steps. You never open the `SKILL.md` of these two skills.
+- **Edits and writes of addon code are reviewed before they are applied** (the `edit` and
+  `write` tools, new files and new modules included) by the `require-skill-reads` extension.
+  You do not choose which guidelines apply: an independent reviewer model (`kilo/kilo-auto/free`
+  by default) receives your exact change plus the whole guideline text of the skill that covers
+  the file (`odoo-guidelines` outside `static/`, `odoo-web-guidelines` for `static/src` and
+  `static/tests`) and answers with findings. Each finding quotes a rule verbatim, says what is
+  wrong and gives the corrected code. All `edit`/`write` calls of one message are reviewed in
+  one batch, so send related changes together.
+  - A file with findings is **blocked** (with all its calls of that message) and nothing is
+    applied for it. Implement **every** finding as given (the corrected code is the expected
+    result) and send the complete change for that file again, all its calls together. The new
+    attempt is reviewed again and the reviewer also checks the previous findings. A change that
+    repeats a blocked one is blocked again without a new review. Do not argue with a finding
+    and do not work around the review (no shell edits, no splitting the change to dodge it).
+  - Files without findings go through; the other files of the batch are decided on their own.
+  - If the reviewer is unavailable (every model of its chain failed), the change is blocked
+    with each model's reason. Send it again to retry; if it keeps failing, report it as a
+    blocker in the final report.
+  - After 5 fresh review rounds on one file with findings still open, the change is let through
+    and the open findings are appended to the tool result. Record them as open findings in the
+    final review; they are not accepted.
+  - To avoid rounds, read the guideline sections that match your change before you draft it
+    (`SKILL.md` of the skill lists when each section applies). The reviewer applies them
+    whether you read them or not.
 - Change files with `edit`/`write` only; shell edits (`sed -i`, redirects, `tee`, inline
   `python -c`) are blocked. If a change is too complex for those tools, as a last resort write
   a script under `/tmp` with `write` and run it.

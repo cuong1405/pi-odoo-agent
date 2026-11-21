@@ -27,8 +27,7 @@
  *     because the agent writes the review itself and cannot be trusted to grade itself:
  *     - the requirements file was written after the request and has a `## Review` section;
  *     - the skill was read after the request, and every guideline file named on the
- *       `Guidelines read:` line was opened after the request (tracked from read/cat calls and
- *       from `guideline_match` results);
+ *       `Guidelines read:` line was opened after the request (tracked from read/cat calls);
  *     - the file has a `Base:` commit, and every file changed since it (committed,
  *       uncommitted, untracked, in the repos the agent edited) appears in the Review section,
  *       so the review covers the whole task;
@@ -657,13 +656,6 @@ export default function (pi: ExtensionAPI) {
       if (abs === REVIEW_SKILL_MD) skillSeq = n;
     }
   };
-
-  pi.on("tool_result", async (event) => {
-    if (event.toolName !== "guideline_match" || event.isError) return undefined;
-    const files = (event.details as { files?: unknown } | undefined)?.files;
-    if (Array.isArray(files)) for (const file of files) if (typeof file === "string") noteSkillRead(file);
-    return undefined;
-  });
 
   pi.on("tool_call", async (event, ctx) => {
     if (event.toolName === "edit" || event.toolName === "write") {
