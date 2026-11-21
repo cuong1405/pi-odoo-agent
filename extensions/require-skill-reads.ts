@@ -45,7 +45,7 @@
  *     and an approved change that failed to apply is not reviewed again.
  *
  * Failure policy. The reviewer is the authority, so there is no way around it: when every model
- * of the chain fails (not installed, no credentials, timeout, unusable reply) the change is
+ * of the chain fails (not installed, no credentials, error, unusable reply) the change is
  * blocked with each model's reason and nothing is approved silently; sending the change again
  * retries the review. The one valve: when a file still has findings after MAX_ROUNDS rounds of
  * fresh reviews (default 5; PI_GUIDELINE_REVIEW_MAX_ROUNDS=0 disables the valve), the change is
@@ -85,14 +85,12 @@ const WEB_SKILL = "odoo-web-guidelines";
 
 /** [provider, modelId] in priority order; entries must be able to follow a JSON-only prompt. */
 const DEFAULT_CHAIN: Array<[string, string]> = [["kilo", "kilo-auto/free"]];
-const PER_MODEL_TIMEOUT_MS = 180_000;
-/**
- * Reasoning effort per request. `kilo-auto` may route to a reasoning model that spends its whole
- * output allowance thinking (stopReason=length, no text), so the first request asks for little
- * reasoning (it also keeps the wait short) and a request that still runs out is retried once
- * with the least. The output limit is the model's own maximum, never a number of ours.
+/*
+ * No timeout and no output cap of ours: a free model is slow rather than costly, and the user
+ * can abort the run. Reasoning is left OFF: pi-ai sends `reasoning: {effort: "none"}` to a
+ * reasoning model (thinkingFormat "openrouter", such as kilo-auto) when no level is requested,
+ * whereas any level (even "minimal") turns thinking on and makes every review slower.
  */
-const EFFORTS = ["low", "minimal"];
 
 const MAX_ROUNDS = (() => {
   const raw = process.env.PI_GUIDELINE_REVIEW_MAX_ROUNDS;
@@ -557,10 +555,7 @@ type ReviewResult =
   | { ok: true; model: string; byFile: Map<string, Finding[]>; dropped: string[] }
   | { ok: false; failures: string[] };
 
-/**
- * One stateless completion in a fresh context; the reply text, or an error. A request that runs
- * out of output tokens (a reasoning model thinking too long) is retried once with less reasoning.
- */
+/** One stateless completion in a fresh context (reasoning off); the reply text, or an error. */
 async function ask(
   ctx: any,
   model: any,
@@ -568,31 +563,24 @@ async function ask(
   user: string,
   signal: AbortSignal | undefined,
 ): Promise<string> {
-  const timeout = AbortSignal.timeout(PER_MODEL_TIMEOUT_MS);
-  const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   const context = {
     systemPrompt: system,
     messages: [{ role: "user", content: [{ type: "text", text: user }], timestamp: Date.now() }],
   };
+  // The model's own output limit, never a number of ours; no `reasoning` (see above).
   const limit = typeof model.maxTokens === "number" && model.maxTokens > 0 ? { maxTokens: model.maxTokens } : {};
   let result: any;
-  for (const reasoning of EFFORTS) {
-    try {
-      result = await ctx.modelRegistry
-        .streamSimple(model, context, { signal: requestSignal, reasoning, ...limit })
-        .result();
-    } catch (error) {
-      if (signal?.aborted) throw new Error("aborted by the user");
-      throw new Error(timeout.aborted ? `timed out after ${PER_MODEL_TIMEOUT_MS / 1000}s` : errorText(error));
-    }
-    if (signal?.aborted) throw new Error("aborted by the user");
-    if (result.stopReason !== "length") break;
+  try {
+    result = await ctx.modelRegistry.streamSimple(model, context, { signal, ...limit }).result();
+  } catch (error) {
+    throw new Error(signal?.aborted ? "aborted by the user" : errorText(error));
   }
+  if (signal?.aborted) throw new Error("aborted by the user");
   if (result.stopReason === "error" || result.stopReason === "aborted") {
     throw new Error(result.errorMessage ?? `stopReason=${result.stopReason}`);
   }
   if (result.stopReason === "length") {
-    throw new Error("ran out of output tokens at the model's own limit (reasoning or reply too long)");
+    throw new Error("ran out of output tokens at the model's own limit (the model probably kept reasoning)");
   }
   const text = (result.content ?? [])
     .filter((b: any) => b.type === "text")
