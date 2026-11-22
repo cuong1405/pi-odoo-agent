@@ -705,7 +705,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("agent_before_settle", async (event, ctx) => {
     if (!inFlight()) return undefined; // nothing started: questions and read-only work are never held
-    if (event.outcome !== "completed") return undefined; // errors/aborts are hard exits
+    if (event.outcome !== "completed") return undefined; // errors/aborts are hard exits (provider errors: auto-recover.ts)
 
     const requirementsFile = newestLogFileSince("_requirements.md", 0);
     if (!requirementsFile) {

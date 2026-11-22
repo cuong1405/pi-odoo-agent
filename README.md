@@ -11,6 +11,7 @@ Odoo's own setup).
 | `extensions/describe-screenshot.ts` | `~/.pi/agent/extensions/` |
 | `extensions/require-skill-reads.ts` | `~/.pi/agent/extensions/` |
 | `extensions/require-review-gate.ts` | `~/.pi/agent/extensions/` |
+| `extensions/auto-recover.ts` | `~/.pi/agent/extensions/` |
 | `skills/odoo-task-requirements/` | `~/.pi/agent/skills/` |
 
 ```bash
@@ -35,6 +36,16 @@ through with a warning; `0` never lets it through), `PI_SKILLS_DIR` (default `~/
 and `ODOO_RC` (the `odoo.conf` whose `addons_path` marks addon code, default
 `~/src/odoo/config/odoo.conf`). It reads `SKILL.md` and `guidelines/**.md` of `odoo-guidelines` and
 `odoo-web-guidelines` from disk on every review, so updating those skills updates the gate.
+
+`auto-recover` resumes a session whose run ended in a provider error after Pi's own retries
+(429 tokens-per-minute limit, `Provider error`, overload, timeout, ...). It waits at least 60 s
+(doubling: 60, 120, 240 s), compacts the session when the context is above 20k tokens, and sends
+a custom message that starts a turn ("check your progress and continue; finish so the review
+gate runs"). `require-review-gate` adds the task state and next steps after the compaction. A new
+prompt, another run starting or an abort (Escape) cancels it; 3 recoveries in a row without a
+successful response, or a permanent-looking error (bad credentials, unknown model), stop it with
+a notice. Pi's own retry settings are untouched. It serves interactive and RPC sessions only.
+Overrides: `PI_AUTO_RECOVER=0` (off), `PI_AUTO_RECOVER_MAX=3`, `PI_AUTO_RECOVER_COOLDOWN_S=60`.
 
 Browser: `AGENTS.md` hard-codes the Ubuntu snap path (`/snap/chromium/current/...`), so it is
 meant for the Ubuntu VPS. Your sandbox script must expose that path (bind `/snap`). Smoke test
