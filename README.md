@@ -9,15 +9,16 @@ Odoo's own setup).
 | `AGENTS.md` | `~/src/odoo/AGENTS.md` |
 | `extensions/no-shell-file-edits.ts` | `~/.pi/agent/extensions/` |
 | `extensions/describe-screenshot.ts` | `~/.pi/agent/extensions/` |
-| `extensions/require-skill-reads.ts` | `~/.pi/agent/extensions/` |
 | `extensions/require-review-gate.ts` | `~/.pi/agent/extensions/` |
 | `extensions/auto-recover.ts` | `~/.pi/agent/extensions/` |
 | `skills/odoo-task-requirements/` | `~/.pi/agent/skills/` |
+| `skills/odoo-browser-tests/` | `~/.pi/agent/skills/` |
+| `skills/odoo-guideline-examples/` | `~/.pi/agent/skills/` |
 
 ```bash
 cp AGENTS.md ~/src/odoo/AGENTS.md
 cp extensions/*.ts ~/.pi/agent/extensions/      # then restart pi
-cp -r skills/odoo-task-requirements ~/.pi/agent/skills/
+cp -r skills/odoo-task-requirements skills/odoo-browser-tests skills/odoo-guideline-examples ~/.pi/agent/skills/
 ```
 
 Copy, don't symlink: the sandbox only mounts `~/.pi` and `~/src/odoo`, so a symlink into this
@@ -27,15 +28,12 @@ session run `diff -r extensions ~/.pi/agent/extensions` and `diff AGENTS.md ~/sr
 `describe_screenshot` models can be overridden with
 `PI_VISION_MODELS="provider/modelId,provider/modelId"` (split on the first `/`).
 
-`require-skill-reads` reviews every `edit`/`write` of addon code with a small model before it is
-applied (default chain `kilo/particle-ai/particle-1:free`, `kilo/stealth/glyph-cluster`, `kilo/reflection/beam-free`; one stateless call per skill per assistant message, so the
-provider must be configured in Pi like for `describe_screenshot`). Overrides:
-`PI_GUIDELINE_REVIEW_MODELS="provider/modelId,provider/modelId"` (split on the first `/`),
-`PI_GUIDELINE_REVIEW_MAX_ROUNDS=5` (fresh review rounds with open findings before a change is let
-through with a warning; `0` never lets it through), `PI_SKILLS_DIR` (default `~/.pi/agent/skills`)
-and `ODOO_RC` (the `odoo.conf` whose `addons_path` marks addon code, default
-`~/src/odoo/config/odoo.conf`). It reads `SKILL.md` and `guidelines/**.md` of `odoo-guidelines` and
-`odoo-web-guidelines` from disk on every review, so updating those skills updates the gate.
+How the guidelines are enforced: no model reviews individual edits. `odoo-task-requirements`
+(first thing in a task) maps the prompt to the guideline sections that apply, has the agent read
+them and writes the requirements file; `odoo-review` (run at the end by `require-review-gate`)
+repeats the same process on the diff, and the gate checks that every guideline file named on its
+`Guidelines read:` line was really opened. `no-shell-file-edits` keeps changes on the `edit`/`write`
+tools. Python style is checked with Odoo's own `ruff.toml` (see `AGENTS.md`).
 
 `auto-recover` resumes a session whose run ended in a provider error after Pi's own retries
 (429 tokens-per-minute limit, `Provider error`, overload, timeout, ...). It waits at least 60 s
@@ -50,3 +48,10 @@ Overrides: `PI_AUTO_RECOVER=0` (off), `PI_AUTO_RECOVER_MAX=3`, `PI_AUTO_RECOVER_
 Browser: `AGENTS.md` hard-codes the Ubuntu snap path (`/snap/chromium/current/...`), so it is
 meant for the Ubuntu VPS. Your sandbox script must expose that path (bind `/snap`). Smoke test
 after install: one unit-test run with N > 0, one browser test, one `describe_screenshot` call.
+
+`odoo-guideline-examples` is generated: `python3 tools/build_guideline_examples.py` copies the code
+blocks verbatim from `git show <commit>:<path>` of the Odoo checkout (`~/src/odoo/odoo`), so the
+curated part is only which file and line range illustrates which guideline section. Rerun it after
+re-checking the ranges when Odoo's source or its guidelines change. The `odoo-*` skills installed
+in `~/.pi/agent/skills` should be refreshed from the checkout's `skills/` directory too (the
+guidelines grew, and `odoo-stable-policy` is new).

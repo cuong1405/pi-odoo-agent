@@ -27,8 +27,8 @@
  *     compaction fails, resume anyway.
  *  5. Send a custom message that starts a turn ("check your progress and continue; finish so
  *     the review gate runs if everything is done"). It is a custom message, not a user
- *     message, so the review stage of require-review-gate and the round counters of
- *     require-skill-reads are not restarted (they reset only on a user prompt).
+ *     message, so the review stage of require-review-gate is not restarted (it resets only on a
+ *     user prompt).
  *
  * Task state: this extension does not know the task. After the compaction it relies on
  * require-review-gate, which answers any compaction it did not start itself with the task
