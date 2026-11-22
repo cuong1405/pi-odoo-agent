@@ -27,7 +27,7 @@ session run `diff -r extensions ~/.pi/agent/extensions` and `diff AGENTS.md ~/sr
 `PI_VISION_MODELS="provider/modelId,provider/modelId"` (split on the first `/`).
 
 `require-skill-reads` reviews every `edit`/`write` of addon code with a small model before it is
-applied (default chain `kilo/reflection/beam-free`, `kilo/particle-ai/particle-1:free`, `kilo/stealth/glyph-cluster`; one stateless call per skill per assistant message, so the
+applied (default chain `kilo/particle-ai/particle-1:free`, `kilo/stealth/glyph-cluster`, `kilo/reflection/beam-free`; one stateless call per skill per assistant message, so the
 provider must be configured in Pi like for `describe_screenshot`). Overrides:
 `PI_GUIDELINE_REVIEW_MODELS="provider/modelId,provider/modelId"` (split on the first `/`),
 `PI_GUIDELINE_REVIEW_MAX_ROUNDS=5` (fresh review rounds with open findings before a change is let

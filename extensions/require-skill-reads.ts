@@ -60,9 +60,8 @@
  * Install: copy to ~/.pi/agent/extensions/require-skill-reads.ts and run /reload.
  *   PI_SKILLS_DIR                    skills directory (default ~/.pi/agent/skills)
  *   PI_GUIDELINE_REVIEW_MODELS       reviewer chain "provider/modelId,provider/modelId" (split on
- *                                    the FIRST "/"; default kilo/reflection/beam-free, then
- *                                    kilo/particle-ai/particle-1:free, then
- *                                    kilo/stealth/glyph-cluster)
+ *                                    the FIRST "/"; default kilo/particle-ai/particle-1:free, then
+ *                                    kilo/stealth/glyph-cluster, then kilo/reflection/beam-free)
  *   PI_GUIDELINE_REVIEW_MAX_ROUNDS   rounds before the valve (default 5, 0 = never)
  *   ODOO_RC                          odoo.conf whose addons_path marks addon code
  *                                    (default ~/src/odoo/config/odoo.conf)
@@ -87,9 +86,9 @@ const WEB_SKILL = "odoo-web-guidelines";
 
 /** [provider, modelId] in priority order; entries must be able to follow a JSON-only prompt. */
 const DEFAULT_CHAIN: Array<[string, string]> = [
-  ["kilo", "reflection/beam-free"], // benchmarked: every reply valid JSON, no 429s, no gateway retries
-  ["kilo", "particle-ai/particle-1:free"], // best detection and fastest, but had 429s
-  ["kilo", "stealth/glyph-cluster"], // caught a new-module violation the others missed
+  ["kilo", "particle-ai/particle-1:free"], // benchmarked: best detection and fastest
+  ["kilo", "stealth/glyph-cluster"], // caught a new-module violation particle-1 missed
+  ["kilo", "reflection/beam-free"], // safety net: every reply valid JSON, no 429s, no gateway retries
 ];
 /*
  * No timeout and no output cap of ours: a free model is slow rather than costly, and the user

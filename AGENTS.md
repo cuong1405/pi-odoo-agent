@@ -12,7 +12,7 @@ is relative to the guideline file that holds it: `~/.pi/agent/skills/odoo-guidel
 
 - **Edits and writes of addon code are reviewed before they are applied** (the `edit` and
   `write` tools, new files and new modules included) by the `require-skill-reads` extension.
-  You do not choose which guidelines apply: an independent reviewer model (`kilo/reflection/beam-free`
+  You do not choose which guidelines apply: an independent reviewer model (`kilo/particle-ai/particle-1:free`
   by default, with two fallbacks) receives your exact change plus the whole guideline text of the skill that covers
   the file (`odoo-guidelines` outside `static/`, `odoo-web-guidelines` for `static/src` and
   `static/tests`) and answers with findings. Each finding quotes a rule verbatim, says what is
