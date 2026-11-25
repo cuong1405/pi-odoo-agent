@@ -64,8 +64,8 @@ The house rules live in the sibling skills, read fresh for every task:
    every existing method, field, view, template or key the task changes or extends, find its
    consumers and overrides across every addons path (`git grep`) and add a row for each that
    can break. Give this pass the same legwork as the rules pass.
-6. **Report.** Write the file (below). Every row carries a verbatim Source and a Check. Close
-   the Map with a `Guidelines read:` line listing every guideline and example file opened.
+6. **Report.** Write the file (below). Every row carries a verbatim Source and a Check. List
+   every guideline and example file opened in `planningReads`.
 
 The mapping is complete when every file the task needs is mapped, every mapped section has
 been read, every requirement has had both passes, and every row has its Source and Check.
@@ -84,54 +84,18 @@ Odoo's ORM and view syntax change between major versions (`attrs=`, `<tree>`, `n
 attribute, confirm it exists in the checkout (`git grep` the ORM source or a usage at that
 revision), not from memory.
 
-## Where
+## Where and format
 
-`~/src/odoo/log/<task>_requirements.md`, with `<task>` a short lowercase slug with
-underscores (`library_loans`). The name must end in `_requirements.md`: the review gate looks
-for it. One file per task; a follow-up prompt updates the same file. It lives outside the
-addon repository and is never committed.
+Write `~/src/odoo/log/<task>_requirements.json` via the write tool. Use a short
+lowercase task slug with underscores. Read [the schema](requirements.schema.json)
+and copy the structure of [the example](requirements.example.json). Write plain
+JSON without Markdown fences. Keep one file per task, outside the addon repository.
 
-## Format
-
-```
-# <task>: requirements
-
-Task: <one sentence>
-Base: <branch>, <commit the work starts from>
-
-## Acceptance
-<every threshold, count, score, version, name and definition-of-done line the prompt states,
-copied exactly>
-
-## Map
-| Planned file or area | Guideline sections |
-|---|---|
-| models/library_loan.py | python.md#imports, python.md#naming-and-model-layout, orm.md#computes-onchange-and-constraints; examples_python.md, examples_orm.md |
-
-Guidelines read: <the guideline and example files opened for this map, for example python.md, examples_python.md>
-
-## Requirements
-| # | Requirement | MUST/SHOULD | Source | Check | Verdict | Evidence |
-|---|---|---|---|---|---|---|
-| 1 | A confirmed `library.loan` cannot be edited by a portal user | MUST | "portal users never edit a confirmed loan" | test: portal user write raises AccessError | | |
-| 2 | Loan list shows the due date | MUST | implied: "loans must be trackable" | screenshot of the list view | | |
-
-## Out of scope
-- <what the prompt says not to do>
-
-## Assumptions
-- <each ambiguity and the interpretation chosen>
-
-## Changes
-- <date> follow-up: <what changed, which rows>
-
-## Review
-<written by the final review, never at the start: see "The review" below>
-```
-
-Keep the requirements table columns as shown and `## Review` as the last section; the review
-gate reads them. Leave Verdict and Evidence empty when you write the rows. Keep the Map table
-free of the words "requirement" and "must" in its header.
+The contract records acceptance criteria, the guideline and example mapping, and
+requirements with stable IDs, priorities, sources and one or more checks.
+Set `review` to `null` at the start. This follows Anthropic's feature-list
+pattern of defining verifiable behavior up front and recording pass status after
+verification. Pi's review metadata is specific to this gate.
 
 ## Writing the requirements
 
@@ -154,24 +118,30 @@ free of the words "requirement" and "must" in its header.
 
 ## The review
 
-The review gate asks for it when you try to finish. It is recorded in this file, nowhere else:
+When the gate requests a review, edit only `review`. Fill `results` with one
+entry per requirement ID, a boolean `passes`, and concrete `evidence` from the
+fresh checks. List exact repository-relative paths in `reviewedFiles` and the
+guidelines freshly opened in `guidelinesRead` as paths relative to the Pi skills
+directory (for example `odoo-guidelines/guidelines/python.md`). Use an empty `findings` array
+when there are no findings. For each finding provide its ID, file, location,
+defect, scenario, fix, guideline or judgement, status, and a `fixCommit` hash
+for fixed findings (otherwise `null`).
 
-- **Verdict / Evidence** on every row: `met` or `not met`, and what you ran or read for the
-  review (command and result line, test name, log line, PNG path). Overwrite earlier values.
-- **`## Review` section** (replace the placeholder): `Files reviewed:` with every file changed
-  since `Base:`, the findings table (columns `# | File:line | Defect | Failure scenario | Fix |
-  Guideline section or *judgement* | Status`, or `No findings.`), and a closing
-  `Guidelines read: <files>` line. The gate's message states the exact steps and the bar.
+Example review for the requirement in the example file:
+
+```json
+{
+  "results": [{"id": "1", "passes": true, "evidence": "test_portal_write_denied passed with AccessError"}],
+  "reviewedFiles": ["models/library_loan.py", "tests/test_library_loan.py"],
+  "guidelinesRead": ["odoo-guidelines/guidelines/orm.md"],
+  "findings": []
+}
+```
 
 ## Keeping it current
 
-- A follow-up prompt changes the file before any code does: run Scope, Map, Read and both
-  passes again for what the prompt changes, edit the affected rows, add new ones, clear the
-  Verdict and Evidence of every row you changed or added, and write a line under Changes. If
-  nothing changed, write that line anyway.
-- A correction in the prompt replaces the wrong row. Mark the old one `superseded by #<n>`
-  and keep it, so the history stays readable.
-- When the work enters an area that is not in the Map, add it, read its sections and run both
-  passes for it before writing code there.
-- After a context reset or compaction, re-read this file and the mapped sections of the next
-  step before continuing; the summary does not hold the rules.
+- Apply follow-up requirements before code changes. Re-run Scope, Map, Read and
+  both passes for the affected areas. Preserve stable IDs, record replacements
+  and their reasons in `changes`, and reset `review` to `null`.
+- Update the scope map and read its guidelines and examples before entering a
+  new area. After compaction, re-read the JSON and the applicable skill sections.

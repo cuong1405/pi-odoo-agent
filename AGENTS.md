@@ -8,8 +8,8 @@ spend it on verification, not on asking.
 
 1. **Start: `odoo-task-requirements`.** Load it before any code (anything beyond a one-line
    fix). It maps the prompt to the guideline sections that apply, you read them, and it
-   writes the requirements file `~/src/odoo/log/<task>_requirements.md`. That file is the
-   single source of truth: the requirements, and later the review. A follow-up prompt changes
+   writes the requirements file `~/src/odoo/log/<task>_requirements.json`. That file is the
+   single source of truth for the contract and its `review` results. A follow-up prompt changes
    the file before it changes code.
 2. **Build in small steps.** Whenever you analyse, write or edit a file, first open the
    guideline sections that cover it (index in the skill's `SKILL.md`, whole file, not from

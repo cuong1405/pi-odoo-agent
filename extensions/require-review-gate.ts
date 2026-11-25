@@ -10,10 +10,9 @@
  * rebuilding the state of the task from the FILE and git (not from memory) whenever the
  * context was compacted, so the agent resumes from the highest-priority open item.
  *
- * One file is the single source of truth: `<log dir>/<task>_requirements.md`, which the agent
- * writes with the odoo-task-requirements skill. The review is recorded in that same file: a
- * Verdict and an Evidence cell on every requirement row, and a closing `## Review` section
- * (files reviewed, findings table, `Guidelines read:` line). There is no separate report.
+ * One file is the single source of truth: `<log dir>/<task>_requirements.json`, which the agent
+ * writes with the odoo-task-requirements skill. The `review` field records results, files,
+ * guidelines read, and findings in the same document.
  *
  *  0. If no requirements file exists when the agent tries to finish, the gate does not run:
  *     the agent is sent back once, only to tell the human in its final message that the file
@@ -25,14 +24,14 @@
  *     (nothing of the skill is restated here), and record the review in the requirements file.
  *  2. Each later attempt to finish is checked against facts the extension can verify,
  *     because the agent writes the review itself and cannot be trusted to grade itself:
- *     - the requirements file was written after the request and has a `## Review` section;
- *     - the skill was read after the request, and every guideline file named on the
- *       `Guidelines read:` line was opened after the request (tracked from read/cat calls);
- *     - the file has a `Base:` commit, and every file changed since it (committed,
- *       uncommitted, untracked, in the repos the agent edited) appears in the Review section,
+ *     - the requirements file was written after the request and has a completed `review` object;
+ *     - the skill was read after the request, and every guideline file named in the
+ *       `guidelinesRead` array was opened after the request (tracked from read/cat calls);
+ *     - the file has a `base.commit`, and every file changed since it (committed,
+ *       uncommitted, untracked, in the repos the agent edited) appears in `review.reviewedFiles`,
  *       so the review covers the whole task;
- *     - every numbered requirement row has Verdict `met` with non-empty evidence for every
- *       MUST row, and at least 90% of all rows (the 90% is the tolerance for a task text that
+ *     - every MUST requirement has `passes: true` and non-empty evidence, and at least
+ *       90% of all requirements pass (the 90% is the tolerance for a task text that
  *       is not 100% accurate, so it only ever forgives SHOULD rows);
  *     - at least 90% of the findings are `fixed` AND name a commit hash that exists in the
  *       repo and is reachable from HEAD.
@@ -41,7 +40,7 @@
  * Every message that sends the agent back has two parts, both computed from the file and git:
  *  - Task state: requirements (MUST/SHOULD counts), the review if it was written (met count,
  *    each unmet MUST with its text and Check, open findings), and per repo the commits since
- *    `Base:` and the uncommitted files.
+ *    `base.commit` and the uncommitted files.
  *  - Next steps, highest priority first: no review -> write it; unmet MUSTs; open findings;
  *    the 90% bar; changed files missing from the review; format problems.
  *
@@ -56,7 +55,7 @@
  * state + next steps" message with the same content, delivered with the next LLM call
  * (steered into a running turn; stored for the next prompt when Pi is idle).
  *
- * A review with no findings says `No findings.` in the Review section.
+ * A review with no findings has an empty `review.findings` array.
  *
  * There is no retry cap and no escape hatch the agent can use: it keeps working until the
  * bar is met, and the human interrupts the session if it is stuck. The one exception is a
@@ -75,6 +74,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import Schema from "typebox/schema";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const MIN_FIXED_RATIO = 0.9;
@@ -88,7 +88,7 @@ const MAX_IDLE_RUNS = 3;
 const COMPACT_TOKENS = 51_000;
 const COMPACT_INSTRUCTIONS =
   "Checkpoint of a long Odoo task. Keep: the task and the path of its requirements file " +
-  "(<task>_requirements.md) with its Base commit, the numbers of the requirements still not " +
+  "(<task>_requirements.json) with its Base commit, the numbers of the requirements still not " +
   "met, every file changed and commit made, the commands and tests run with their results, " +
   "and every problem still open. Drop exploration and long tool output. Do not record a time " +
   "limit, an effort limit or missing infrastructure as a constraint: there is none, and the " +
@@ -101,6 +101,8 @@ const SKILLS_DIR = path.resolve(
   process.env.PI_SKILLS_DIR || path.join(os.homedir(), ".pi", "agent", "skills"),
 );
 const REVIEW_SKILL_MD = path.join(SKILLS_DIR, "odoo-review", "SKILL.md");
+const REQUIREMENTS_SUFFIX = "_requirements.json";
+const REQUIREMENTS_SCHEMA = path.join(SKILLS_DIR, "odoo-task-requirements", "requirements.schema.json");
 
 function expand(p: string, cwd: string): string {
   if (p === "~" || p.startsWith("~/")) p = path.join(os.homedir(), p.slice(1));
@@ -122,144 +124,78 @@ function isCodeEdit(abs: string): boolean {
 
 // ---------------------------------------------------------- requirements file
 
-const cells = (line: string) =>
-  line
-    .trim()
-    .replace(/^\||\|$/g, "")
-    .split("|")
-    .map((c) => c.trim());
-const plain = (s: string) => s.replace(/[`*_]/g, "").trim().toLowerCase();
-
-interface Table {
-  header: string[];
-  rows: string[][];
+interface Requirement {
+  id: string;
+  priority: "must" | "should";
+  description: string;
+  checks: string[];
 }
-
-function parseTables(text: string): Table[] {
-  const tables: Table[] = [];
-  let current: Table | undefined;
-  for (const line of text.split("\n")) {
-    if (!line.trim().startsWith("|")) {
-      current = undefined;
-      continue;
-    }
-    const c = cells(line);
-    if (!current) {
-      current = { header: c.map(plain), rows: [] };
-      tables.push(current);
-    } else if (!c.every((x) => /^:?-{2,}:?$/.test(x))) {
-      current.rows.push(c);
-    }
-  }
-  return tables;
-}
-
-const colOf = (t: Table, pred: (name: string) => boolean) => t.header.findIndex(pred);
 
 interface Finding {
   id: string;
-  where: string;
-  fix: string;
-  status: string;
+  file: string;
+  location: string;
+  status: "open" | "fixed" | "flagged";
+  fixCommit: string | null;
 }
 
-interface Row {
-  id: string;
-  kind: string; // "must" or "should"
-  text: string;
-  check: string;
-  verdict: string; // "met", "not met" or "" before the review
-  evidence: string;
+interface Review {
+  results: { id: string; passes: boolean; evidence: string }[];
+  reviewedFiles: string[];
+  guidelinesRead: string[];
+  findings: Finding[];
 }
 
 interface Task {
-  file: string;
-  mtime: number;
-  base?: string;
-  rows: Row[];
-  /** The closing `## Review` section; undefined until the agent has written it. */
-  review?: {
-    text: string;
-    guidelinesLine: string;
-    noFindings: boolean;
-    findings: Finding[];
-  };
+  base: { commit: string };
+  requirements: Requirement[];
+  review: Review | null;
 }
 
-/** The `## Review` section: `Guidelines read:` line, `No findings.` and the findings table. */
-function parseReviewSection(text: string): NonNullable<Task["review"]> {
-  const lines = text.split("\n");
-  const gi = lines.findIndex((l) => /^\s*[*_]*guidelines read[*_]*\s*:/i.test(l));
-  let guidelinesLine = "";
-  if (gi >= 0) {
-    for (let i = gi; i < lines.length && (i === gi || lines[i].trim() !== ""); i++) {
-      guidelinesLine += " " + lines[i];
-    }
-    guidelinesLine = guidelinesLine.replace(/^\s*[*_]*guidelines read[*_]*\s*:[*_]*/i, "").trim();
-  }
-  const review = { text, guidelinesLine, noFindings: /\bno findings\b/i.test(text), findings: [] as Finding[] };
-  for (const t of parseTables(text)) {
-    const st = colOf(t, (n) => n === "status");
-    const wh = colOf(t, (n) => n.includes("file"));
-    const fx = colOf(t, (n) => n === "fix");
-    const id = Math.max(0, colOf(t, (n) => n === "#" || n === "id"));
-    if (st < 0 || wh < 0) continue;
-    for (const r of t.rows) {
-      if (!r[st]) continue;
-      review.findings.push({
-        id: r[id] || String(review.findings.length + 1),
-        where: r[wh] || "",
-        fix: fx >= 0 ? r[fx] || "" : "",
-        status: plain(r[st]),
-      });
+let validator: ReturnType<typeof Schema.Compile> | undefined;
+
+function parseTask(file: string): { task: Task; mtime: number } {
+  if (!validator) {
+    try {
+      validator = Schema.Compile(JSON.parse(readFileSync(REQUIREMENTS_SCHEMA, "utf8")));
+    } catch (error) {
+      throw new Error(`Cannot load the installed schema at ${REQUIREMENTS_SCHEMA}: ${errorMessage(error)}`);
     }
   }
-  return review;
+
+  const data: unknown = JSON.parse(readFileSync(file, "utf8"));
+  if (!validator.Check(data)) {
+    const [, issues] = validator.Errors(data);
+    const errors = issues.map((e) => `${e.instancePath || "/"}: ${e.message}`);
+    throw new Error(list(errors, 5));
+  }
+
+  const task = data as Task;
+  const ids = new Set<string>();
+  for (const requirement of task.requirements) {
+    if (ids.has(requirement.id)) throw new Error(`Duplicate requirement ID: ${requirement.id}`);
+    ids.add(requirement.id);
+  }
+  return { task, mtime: statSync(file).mtimeMs };
 }
 
-/** Requirement rows (numbered, MUST/SHOULD, with Verdict/Evidence), `Base:` commit, the review. */
-function parseTask(file: string): Task {
-  const text = readFileSync(file, "utf8");
-  const baseLine = text.match(/^\s*[*_]*base[*_]*\s*:\s*(.+)$/im)?.[1] ?? "";
-  const task: Task = {
-    file,
-    mtime: statSync(file).mtimeMs,
-    base: baseLine.match(/\b[0-9a-f]{7,40}\b/)?.[0],
-    rows: [],
-  };
-  const at = text.search(/^##\s+review\b/im);
-  for (const t of parseTables(at >= 0 ? text.slice(0, at) : text)) {
-    const kind = colOf(t, (n) => n.includes("must"));
-    const req = colOf(t, (n) => n.includes("requirement"));
-    const chk = colOf(t, (n) => n === "check");
-    const vd = colOf(t, (n) => n === "verdict");
-    const ev = colOf(t, (n) => n.includes("evidence"));
-    if (kind < 0 || req < 0) continue;
-    for (const r of t.rows) {
-      if (!/^\d+$/.test(plain(r[0] ?? ""))) continue;
-      if (/superseded/i.test(r.join(" "))) continue;
-      task.rows.push({
-        id: plain(r[0]),
-        kind: plain(r[kind] ?? ""),
-        text: (r[req] ?? "").trim(),
-        check: chk >= 0 ? (r[chk] ?? "").trim() : "",
-        verdict: vd >= 0 ? plain(r[vd] ?? "") : "",
-        evidence: ev >= 0 ? (r[ev] ?? "").trim() : "",
-      });
-    }
-  }
-  if (at >= 0) task.review = parseReviewSection(text.slice(at));
-  return task;
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
-const isMet = (r: Row) => r.verdict === "met" && r.evidence.length > 0;
+function resultIndex(review: Review) {
+  return new Map(review.results.map((result) => [result.id, result]));
+}
 
-function newestLogFileSince(suffix: string, minMtimeMs: number): string | undefined {
+function isMet(result: Review["results"][number] | undefined): boolean {
+  return result?.passes === true && result.evidence.trim().length > 0;
+}
+
+function newestRequirementsFile(): string | undefined {
   try {
-    const files = readdirSync(LOG_DIR)
-      .filter((f) => f.endsWith(suffix))
-      .map((f) => path.join(LOG_DIR, f))
-      .filter((f) => statSync(f).mtimeMs >= minMtimeMs && statSync(f).size > 0);
+    const files = readdirSync(LOG_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(REQUIREMENTS_SUFFIX))
+      .map((entry) => path.join(LOG_DIR, entry.name));
     files.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
     return files[0];
   } catch {
@@ -290,24 +226,29 @@ function changedSince(roots: Set<string>, base: string): { root: string; file: s
   const out: { root: string; file: string }[] = [];
   for (const root of roots) {
     if (git(root, ["cat-file", "-e", `${base}^{commit}`]) === undefined) continue;
-    const tracked = git(root, ["diff", "--name-only", base]) ?? "";
-    const untracked = git(root, ["ls-files", "--others", "--exclude-standard"]) ?? "";
-    for (const f of new Set([...tracked.split("\n"), ...untracked.split("\n")])) {
-      if (f.trim()) out.push({ root, file: f.trim() });
+    const tracked = git(root, ["diff", "--name-only", "-z", base, "--"]);
+    const untracked = git(root, ["ls-files", "--others", "--exclude-standard", "-z"]);
+    if (tracked === undefined || untracked === undefined) {
+      throw new Error(`Cannot list changed files in ${root}`);
+    }
+    for (const f of new Set([...tracked.split("\0"), ...untracked.split("\0")])) {
+      if (f) out.push({ root, file: f });
     }
   }
   return out;
 }
 
 /** A `fixed` finding must name a real commit that is reachable from HEAD. */
-function hasRealCommit(fix: string, roots: Set<string>): boolean {
-  for (const sha of fix.match(/\b[0-9a-f]{7,40}\b/g) ?? []) {
-    for (const root of roots) {
-      if (git(root, ["cat-file", "-e", `${sha}^{commit}`]) === undefined) continue;
-      if (git(root, ["merge-base", "--is-ancestor", sha, "HEAD"]) !== undefined) return true;
-    }
-  }
-  return false;
+function hasRealCommit(sha: string | null, roots: Set<string>): boolean {
+  return sha !== null && [...roots].some((root) =>
+    git(root, ["cat-file", "-e", `${sha}^{commit}`]) !== undefined &&
+    git(root, ["merge-base", "--is-ancestor", sha, "HEAD"]) !== undefined
+  );
+}
+
+function missingReviewedFiles(review: Review, roots: Set<string>, base: string): string[] {
+  const reviewed = new Set(review.reviewedFiles);
+  return changedSince(roots, base).map(({ file }) => file).filter((file) => !reviewed.has(file));
 }
 
 // ------------------------------------------------------------ the review
@@ -319,38 +260,27 @@ function reviewRequest(requirementsFile: string): string {
     `read it earlier) and follow ALL of its instructions strictly, every section and not ` +
     `only its numbered process. Work from the skill itself, not from memory or from this ` +
     `message. Its sibling guideline files must be opened again for this review.\n` +
-    `   b. Scope: the whole task, from the \`Base:\` commit in ${requirementsFile} to HEAD, ` +
-    `plus uncommitted and untracked files. Every changed file must be listed in your review ` +
-    `(the skill's Map step).\n` +
-    `   c. Check every requirement in ${requirementsFile}. Run its Check yourself now; do not ` +
-    `mark anything met from memory or from an earlier run. In the requirements table of that ` +
-    `file, fill in for every row (overwrite earlier values) the Verdict cell, \`met\` or ` +
-    `\`not met\`, and the Evidence cell: what you ran or read for this review (command and ` +
-    `result line, test name, log line, PNG path), never a claim. Every MUST requirement must ` +
-    `be \`met\`, and at least ${MIN_MET_RATIO * 100}% of all requirements (SHOULD included).\n` +
-    `   d. Record the review in the same file, as a \`## Review\` section at the END of it (the ` +
-    `only place the review is written: no separate report file), with:\n` +
-    `      Files reviewed: <every changed file>\n` +
-    `      the findings, in the skill's report format, as a table with exactly these columns ` +
-    `(the skill's finding fields plus Status)\n` +
-    `      | # | File:line | Defect | Failure scenario | Fix | Guideline section or *judgement* | Status |\n` +
-    `      A finding is a defect in the code or a gap against a requirement, not a ` +
-    `description of what you changed. A weakened test, relaxed threshold or shortfall against ` +
-    `a requirement is a finding even if you believe it is justified. Status starts as ` +
-    `\`open\`. With no findings, write \`No findings.\` instead of the table.\n` +
-    `      Guidelines read: <the guideline files you opened for this review, for example ` +
-    `odoo-guidelines/python.md; each must have been opened after this request>\n` +
-    `   e. Fix every finding you can (with a test that covers it) and commit; set Status to ` +
-    `\`fixed\` and put the commit hash in the Fix cell. Leave an ambiguous one \`flagged\` with ` +
-    `the reason in its Fix cell. At least ${MIN_FIXED_RATIO * 100}% of the findings must be ` +
-    `\`fixed\` with a commit that exists in the repository.`
+    `   b. Review the whole diff from base.commit in ${requirementsFile}, including uncommitted ` +
+    `and untracked work. List exact repository-relative paths in review.reviewedFiles. To see ` +
+    `Unicode paths, use git -c core.quotePath=false diff --name-only <base.commit> and ` +
+    `git -c core.quotePath=false ls-files --others --exclude-standard.\n` +
+    `   c. Run each requirement's checks now. In review.results, record one object per ID: ` +
+    `{"id":"1","passes":true,"evidence":"command and observed result"}. Every MUST and at ` +
+    `least ${MIN_MET_RATIO * 100}% of all requirements must pass with evidence.\n` +
+    `   d. Replace only the review field in the same JSON file, following ${REQUIREMENTS_SCHEMA}. ` +
+    `Record freshly opened skill-relative files in review.guidelinesRead, for example ` +
+    `odoo-guidelines/guidelines/python.md. Use review.findings: [] when there are no findings. ` +
+    `Treat weakened tests, relaxed thresholds, and requirement shortfalls as findings.\n` +
+    `   e. Fix findings and commit. Set status to "fixed" with the reachable hash in fixCommit. ` +
+    `Record the reason in fix for "flagged" findings. At least ${MIN_FIXED_RATIO * 100}% of ` +
+    `findings must be fixed with a reachable commit.`
   );
 }
 
 interface ReviewContext {
   requestTime: number;
   skillReadAfterRequest: boolean;
-  guidelineReadsAfterRequest: Set<string>; // basenames of skill .md files opened after the request
+  guidelineReadsAfterRequest: Set<string>; // paths relative to the skills directory opened after the request
   roots: Set<string>;
   requirementsFile: string;
 }
@@ -375,119 +305,82 @@ function reviewProblems(c: ReviewContext): Problem[] {
   const problems: Problem[] = [];
   const add = (priority: number, text: string) => problems.push({ priority, text });
   const file = c.requirementsFile;
-  const task = parseTask(file);
-  const review = task.review;
-  if (!review || task.mtime < c.requestTime) {
-    add(
-      0,
-      `The review is not recorded in ${file} since it was requested: fill in the Verdict and ` +
-        `Evidence cells of the requirements table and add the closing \`## Review\` section ` +
-        `(Files reviewed, findings table or \`No findings.\`, \`Guidelines read:\` line). ` +
-        `Do not write a separate report file.`,
-    );
-    if (!c.skillReadAfterRequest) {
-      add(0, `Open ${REVIEW_SKILL_MD} with the read tool first, then review per all of its instructions.`);
-    }
+  let parsed: ReturnType<typeof parseTask>;
+  try {
+    parsed = parseTask(file);
+  } catch (error) {
+    add(0, `Repair ${file} using the requirements schema. ${errorMessage(error)}`);
     return problems;
   }
+  const { task, mtime } = parsed;
+  const { review } = task;
+  if (!review || mtime < c.requestTime) {
+    add(0, `Record a fresh review in the review field of ${file}, using ${REQUIREMENTS_SCHEMA}.`);
+  }
+
   if (!c.skillReadAfterRequest) {
-    add(
-      5,
-      `The review skill was not loaded since the review was requested: open ` +
-        `${REVIEW_SKILL_MD} with the read tool, then review per all of its instructions.`,
-    );
+    add(5, `Open ${REVIEW_SKILL_MD} with the read tool and follow it before submitting the review.`);
+  }
+  if (!review || mtime < c.requestTime) return problems;
+
+  const unread = [...new Set(review.guidelinesRead)].filter((f) => !c.guidelineReadsAfterRequest.has(f));
+  if (unread.length) {
+    add(5, `review.guidelinesRead lists files not opened since the review request: ${list(unread)}.`);
   }
 
-  const claimed = [...new Set(review.guidelinesLine.match(/[\w.-]+\.md\b/g) ?? [])];
-  if (!review.guidelinesLine) {
-    add(5, `The \`## Review\` section of ${file} has no closing \`Guidelines read: <files>\` line.`);
-  } else if (claimed.length === 0) {
-    add(5, `The \`Guidelines read:\` line names no guideline file (for example odoo-guidelines/python.md).`);
+  const ids = new Set(task.requirements.map(({ id }) => id));
+  const results = resultIndex(review);
+  const missing = task.requirements.filter(({ id }) => !results.has(id)).map(({ id }) => id);
+  const unknown = [...results.keys()].filter((id) => !ids.has(id));
+  if (results.size !== review.results.length) add(0, "review.results has duplicate requirement IDs.");
+  if (unknown.length) add(0, `review.results has unknown IDs: ${list(unknown)}.`);
+  if (missing.length) add(0, `review.results is missing requirement IDs: ${list(missing)}.`);
+
+  const notMet = task.requirements.filter(({ id }) => !isMet(results.get(id)));
+  const label = (requirement: Requirement) => `#${requirement.id} ${requirement.priority.toUpperCase()}`;
+  const unmetMust = notMet.filter(({ priority }) => priority === "must");
+  if (unmetMust.length) {
+    add(1, `Every MUST must pass with evidence. Re-run the checks for: ${list(unmetMust.map(label))}.`);
+  }
+  const met = task.requirements.length - notMet.length;
+  if (met / task.requirements.length < MIN_MET_RATIO) {
+    add(3, `Only ${met}/${task.requirements.length} requirements pass with evidence ` +
+      `(need ${MIN_MET_RATIO * 100}%). Unmet: ${list(notMet.map(label))}.`);
+  }
+
+  const base = task.base.commit;
+  if (c.roots.size && ![...c.roots].some((root) =>
+    git(root, ["merge-base", "--is-ancestor", base, "HEAD"]) !== undefined
+  )) {
+    add(4, `base.commit ${base} is not an ancestor of HEAD in any edited repository.`);
   } else {
-    const unread = claimed.filter((f) => !c.guidelineReadsAfterRequest.has(f));
-    if (unread.length) {
-      add(
-        5,
-        `\`Guidelines read:\` names files you did not open since the review was requested: ` +
-          `${unread.join(", ")}. Open them now (the skill requires reading them fresh for every ` +
-          `review) or remove them from the line.`,
-      );
+    try {
+      const unmapped = missingReviewedFiles(review, c.roots, base);
+      if (unmapped.length) {
+        add(4, `review.reviewedFiles is missing ${unmapped.length} changed file(s): ${list(unmapped)}.`);
+      }
+    } catch (error) {
+      add(4, errorMessage(error));
     }
   }
 
-  if (task.rows.length === 0) {
-    add(
-      5,
-      `${file} has no numbered requirement rows (table with # | Requirement | MUST/SHOULD ` +
-        `columns, as the odoo-task-requirements skill writes it).`,
-    );
-  } else {
-    const notMet = task.rows.filter((r) => !isMet(r));
-    const label = (r: Row) => `#${r.id} ${r.kind.toUpperCase()}`;
-    const mustNotMet = notMet.filter((r) => r.kind === "must");
-    if (mustNotMet.length) {
-      add(
-        1,
-        `Every MUST requirement must have Verdict \`met\` with Evidence. Not met or not filled ` +
-          `in: ${list(mustNotMet.map(label))}. Work on them, re-run their Check, and update the ` +
-          `Verdict and Evidence cells in ${file}.`,
-      );
-    }
-    const met = task.rows.length - notMet.length;
-    const ratio = met / task.rows.length;
-    if (ratio < MIN_MET_RATIO) {
-      add(
-        3,
-        `Only ${met}/${task.rows.length} requirements are \`met\` with evidence ` +
-          `(${Math.round(ratio * 100)}%, need at least ${MIN_MET_RATIO * 100}% overall, SHOULD ` +
-          `rows included). Not met or not filled in: ${list(notMet.map(label))}.`,
-      );
+  if (new Set(review.findings.map(({ id }) => id)).size !== review.findings.length) {
+    add(0, "review.findings has duplicate finding IDs.");
+  }
+  for (const [index, finding] of review.findings.entries()) {
+    if (finding.status === "fixed" && finding.fixCommit === null) {
+      add(0, `/review/findings/${index}/fixCommit: provide the commit hash for a fixed finding.`);
+    } else if (finding.status !== "fixed" && finding.fixCommit !== null) {
+      add(0, `/review/findings/${index}/fixCommit: set this to null for a ${finding.status} finding.`);
     }
   }
-
-  if (!task.base) {
-    add(
-      5,
-      `${file} has no \`Base: <branch>, <commit>\` line, so the review scope cannot ` +
-        `be checked. Add it (the commit the task started from).`,
-    );
-  } else {
-    const unmapped = changedSince(c.roots, task.base)
-      .filter((f) => !review.text.includes(f.file))
-      .map((f) => f.file);
-    if (unmapped.length) {
-      add(
-        4,
-        `The \`## Review\` section does not mention ${unmapped.length} file(s) changed since ` +
-          `${task.base}: ${list(unmapped)}. Map and review every changed file.`,
-      );
-    }
-  }
-
-  if (review.findings.length === 0) {
-    if (!review.noFindings) {
-      add(
-        5,
-        `The \`## Review\` section has no findings table (columns File:line and Status) and does ` +
-          `not say \`No findings.\``,
-      );
-    }
-    return problems.sort((x, y) => x.priority - y.priority);
-  }
-  const isFixed = (f: Finding) => f.status === "fixed" && hasRealCommit(f.fix, c.roots);
-  const fixed = review.findings.filter(isFixed).length;
-  const ratio = fixed / review.findings.length;
-  if (ratio < MIN_FIXED_RATIO) {
-    const open = review.findings
-      .filter((f) => !isFixed(f))
-      .map((f) => `#${f.id} ${f.where} (${f.status === "fixed" ? "fixed, but no existing commit hash in Fix" : f.status || "no status"})`);
-    add(
-      2,
-      `Only ${fixed}/${review.findings.length} review findings are fixed with a real commit ` +
-        `(${Math.round(ratio * 100)}%, need at least ${MIN_FIXED_RATIO * 100}%). Open: ` +
-        `${list(open)}. Fix them (with a test that covers each), commit, put the commit hash in the Fix ` +
-        `cell and set Status to \`fixed\` in ${file}.`,
-    );
+  const open = review.findings.filter((f) => f.status !== "fixed" || !hasRealCommit(f.fixCommit, c.roots));
+  const fixed = review.findings.length - open.length;
+  if (review.findings.length && fixed / review.findings.length < MIN_FIXED_RATIO) {
+    const details = open.map((f) => `#${f.id} ${f.file}:${f.location} ` +
+      `(${f.status === "fixed" ? "unreachable or missing fixCommit" : f.status})`);
+    add(2, `Only ${fixed}/${review.findings.length} findings are fixed with a reachable commit ` +
+      `(need ${MIN_FIXED_RATIO * 100}%). Open: ${list(details)}.`);
   }
   return problems.sort((x, y) => x.priority - y.priority);
 }
@@ -505,65 +398,65 @@ interface Snapshot {
  * conversation: it must hold after a compaction, a /reload or a resume.
  */
 function snapshot(c: { requirementsFile: string; roots: Set<string>; reviewSince: number }): Snapshot {
-  const task = parseTask(c.requirementsFile);
-  const must = task.rows.filter((r) => r.kind === "must");
+  let parsed: ReturnType<typeof parseTask>;
+  try {
+    parsed = parseTask(c.requirementsFile);
+  } catch (error) {
+    return {
+      text: `Requirements file could not be read: ${errorMessage(error)}`,
+      steps: [`Repair ${c.requirementsFile} using ${REQUIREMENTS_SCHEMA}.`],
+    };
+  }
+  const { task, mtime } = parsed;
+  const must = task.requirements.filter(({ priority }) => priority === "must");
   const lines = [
-    `Task state (read from the requirements file and git, not from memory):`,
-    `- Requirements, ${c.requirementsFile}: ${task.rows.length} rows (${must.length} MUST, ` +
-      `${task.rows.length - must.length} SHOULD)${task.base ? `, Base ${task.base}` : ""}.`,
+    "Task state (read from the requirements file and git):",
+    `- ${c.requirementsFile}: ${task.requirements.length} requirements (${must.length} MUST, ` +
+      `${task.requirements.length - must.length} SHOULD), base ${task.base.commit}.`,
   ];
   const steps: string[] = [];
-  const reqLine = (r: Row) =>
-    `#${r.id} ${r.kind.toUpperCase()}: ${clip(r.text, 140)}${r.check ? ` (Check: ${clip(r.check, 100)})` : ""}`;
+  const reqLine = (requirement: Requirement) =>
+    `#${requirement.id} ${requirement.priority.toUpperCase()}: ${clip(requirement.description, 140)} ` +
+    `(Checks: ${clip(requirement.checks.join("; "), 100)})`;
 
-  const review = task.review;
-  if (!review || task.mtime < c.reviewSince) {
-    lines.push(`- Review: not recorded yet, so no requirement is verified.`);
-    if (must.length) {
-      lines.push(`- MUST requirements to deliver:\n` + must.slice(0, 12).map((r) => `    ${reqLine(r)}`).join("\n"));
-      if (must.length > 12) lines.push(`    ... (+${must.length - 12} more in the requirements file)`);
-    }
-    steps.push(
-      `Deliver every MUST requirement (read the requirements file for the full rows), ` +
-        `committing as you go.`,
-    );
-    steps.push(`When all are done, finish: the review gate then asks for the review of the whole task.`);
+  const { review } = task;
+  if (!review || mtime < c.reviewSince) {
+    lines.push("- Review: pending fresh verification.");
+    if (must.length) lines.push(`- MUST requirements: ${list(must.map(reqLine), 12)}.`);
+    steps.push("Deliver all MUST requirements and commit as you go.");
+    steps.push("At completion the gate requests a fresh review.");
   } else {
-    const unmet = task.rows.filter((r) => !isMet(r));
-    const unmetMust = unmet.filter((r) => r.kind === "must");
-    const fixed = review.findings.filter((f) => f.status === "fixed" && hasRealCommit(f.fix, c.roots));
-    const open = review.findings.filter((f) => !fixed.includes(f));
+    const results = resultIndex(review);
+    const unmet = task.requirements.filter(({ id }) => !isMet(results.get(id)));
+    const unmetMust = unmet.filter(({ priority }) => priority === "must");
+    const open = review.findings.filter((f) => f.status !== "fixed" || !hasRealCommit(f.fixCommit, c.roots));
     lines.push(
-      `- Review, in the same file: ${task.rows.length - unmet.length}/${task.rows.length} ` +
-        `requirements met, ${fixed.length}/${review.findings.length} findings fixed with a commit.`,
+      `- Review: ${task.requirements.length - unmet.length}/${task.requirements.length} requirements passed, ` +
+        `${review.findings.length - open.length}/${review.findings.length} findings fixed with a commit.`,
     );
     if (unmetMust.length) {
-      lines.push(`- MUST requirements not met:\n` + unmetMust.slice(0, 8).map((r) => `    ${reqLine(r)}`).join("\n"));
-      if (unmetMust.length > 8) lines.push(`    ... (+${unmetMust.length - 8} more)`);
-      steps.push(`Make the unmet MUST requirements pass, re-run each Check, update Verdict and Evidence.`);
+      lines.push(`- Unmet MUST requirements: ${list(unmetMust.map(reqLine), 8)}.`);
+      steps.push("Resolve the unmet MUST requirements, re-run their checks, and update review.results.");
     }
     if (open.length) {
-      lines.push(
-        `- Findings not fixed:\n` +
-          open.slice(0, 8).map((f) => `    #${f.id} ${f.where} (${f.status || "no status"})`).join("\n"),
-      );
-      if (open.length > 8) lines.push(`    ... (+${open.length - 8} more)`);
-      steps.push(`Fix the open findings (with a test that covers each), commit, put the hash in the Fix cell.`);
+      lines.push(`- Findings still open: ${list(open.map((f) => `#${f.id} ${f.file}:${f.location} (${f.status})`), 8)}.`);
+      steps.push("Fix and commit open findings and record their fixCommit hashes.");
     }
-    const unmetShould = unmet.filter((r) => r.kind !== "must");
-    if (!unmetMust.length && unmetShould.length && (task.rows.length - unmet.length) / task.rows.length < MIN_MET_RATIO) {
+    if (!unmetMust.length && (task.requirements.length - unmet.length) / task.requirements.length < MIN_MET_RATIO) {
       steps.push(`Meet enough SHOULD requirements to reach ${MIN_MET_RATIO * 100}% overall.`);
     }
-    if (task.base) {
-      const unmapped = changedSince(c.roots, task.base).filter((f) => !review.text.includes(f.file));
-      if (unmapped.length) steps.push(`Add the ${unmapped.length} changed file(s) missing from the Review section: ${list(unmapped.map((f) => f.file), 6)}.`);
+    try {
+      const unmapped = missingReviewedFiles(review, c.roots, task.base.commit);
+      if (unmapped.length) steps.push(`Add the changed files missing from review.reviewedFiles: ${list(unmapped, 6)}.`);
+    } catch (error) {
+      steps.push(errorMessage(error));
     }
-    if (!steps.length) steps.push(`Try to finish: the review bar looks met.`);
+    if (!steps.length) steps.push("Try to finish so the gate can check the recorded review.");
   }
 
   for (const root of c.roots) {
-    const base = task.base;
-    if (!base || git(root, ["cat-file", "-e", `${base}^{commit}`]) === undefined) continue;
+    const base = task.base.commit;
+    if (git(root, ["cat-file", "-e", `${base}^{commit}`]) === undefined) continue;
     const commits = (git(root, ["rev-list", "--count", `${base}..HEAD`]) ?? "?").trim();
     const dirty = (git(root, ["status", "--porcelain"]) ?? "").split("\n").filter(Boolean);
     lines.push(
@@ -579,7 +472,7 @@ function snapshot(c: { requirementsFile: string; roots: Set<string>; reviewSince
 const numbered = (items: string[]) => items.map((p, i) => `${i + 1}. ${p}`).join("\n");
 
 const MISSING_REQUIREMENTS =
-  `The review gate cannot run: no task requirements file exists (${LOG_DIR}/<task>_requirements.md, ` +
+  `The review gate cannot run: no task requirements file exists (${LOG_DIR}/<task>_requirements.json, ` +
   `written with the odoo-task-requirements skill). Do not review and do not keep working. ` +
   `End your final message by telling the human plainly that the task requirements file was ` +
   `missing, so the review gate did not run and the work has not been reviewed; then ` +
@@ -664,7 +557,7 @@ export default function (pi: ExtensionAPI) {
         lastAnyEdit = ++seq;
         const abs = expand(raw, ctx.cwd);
         let changed = false;
-        if (abs.startsWith(LOG_DIR + path.sep) && abs.endsWith("_requirements.md") && !requirementsTouched) {
+        if (abs.startsWith(LOG_DIR + path.sep) && abs.endsWith(REQUIREMENTS_SUFFIX) && !requirementsTouched) {
           requirementsTouched = true;
           changed = true;
         }
@@ -707,7 +600,7 @@ export default function (pi: ExtensionAPI) {
     if (!inFlight()) return undefined; // nothing started: questions and read-only work are never held
     if (event.outcome !== "completed") return undefined; // errors/aborts are hard exits (provider errors: auto-recover.ts)
 
-    const requirementsFile = newestLogFileSince("_requirements.md", 0);
+    const requirementsFile = newestRequirementsFile();
     if (!requirementsFile) {
       if (missingReported) return undefined; // already told the human: let the agent finish
       missingReported = true;
@@ -731,7 +624,7 @@ export default function (pi: ExtensionAPI) {
       problems = [{ priority: 0, text: reviewRequest(requirementsFile) }];
     } else {
       const reads = new Set<string>();
-      for (const [abs, n] of skillReads) if (n > requestSeq) reads.add(path.basename(abs));
+      for (const [abs, n] of skillReads) if (n > requestSeq) reads.add(path.relative(SKILLS_DIR, abs));
       problems = reviewProblems({
         requestTime,
         skillReadAfterRequest: skillSeq > requestSeq,
@@ -825,7 +718,7 @@ export default function (pi: ExtensionAPI) {
       return;
     }
     if (!inFlight()) return;
-    const requirementsFile = newestLogFileSince("_requirements.md", 0);
+    const requirementsFile = newestRequirementsFile();
     if (!requirementsFile) return;
     try {
       const state = snapshot({

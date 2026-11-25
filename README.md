@@ -31,9 +31,23 @@ session run `diff -r extensions ~/.pi/agent/extensions` and `diff AGENTS.md ~/sr
 How the guidelines are enforced: no model reviews individual edits. `odoo-task-requirements`
 (first thing in a task) maps the prompt to the guideline sections that apply, has the agent read
 them and writes the requirements file; `odoo-review` (run at the end by `require-review-gate`)
-repeats the same process on the diff, and the gate checks that every guideline file named on its
-`Guidelines read:` line was really opened. `no-shell-file-edits` keeps changes on the `edit`/`write`
-tools. Python style is checked with Odoo's own `ruff.toml` (see `AGENTS.md`).
+repeats the same process on the diff. The gate validates the task's
+`<task>_requirements.json` against the schema shipped with the skill and checks
+that each file in `review.guidelinesRead` was opened. `no-shell-file-edits` keeps
+changes on the `edit`/`write` tools. Python style uses Odoo's `ruff.toml`.
+
+Install the extension, the full `odoo-task-requirements` skill directory, and
+`AGENTS.md` together. For an in-progress task with a legacy Markdown file, copy
+its contract into the JSON example, preserve its base and requirement IDs, and
+start with `"review": null` so the next review is fresh.
+
+Run the gate regression tests from this checkout with Node 24 and the same
+`typebox` package used by Pi:
+
+```bash
+npm install --no-save --no-package-lock typebox@1.3.27
+node --test tools/require-review-gate.test.mjs
+```
 
 `auto-recover` resumes a session whose run ended in a provider error after Pi's own retries
 (429 tokens-per-minute limit, `Provider error`, overload, timeout, ...). It waits at least 60 s

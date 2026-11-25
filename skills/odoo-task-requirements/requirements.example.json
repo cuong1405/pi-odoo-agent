@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "task": "Protect confirmed loans",
+  "base": {
+    "branch": "main",
+    "commit": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "acceptance": [
+    "Portal users cannot edit a confirmed loan."
+  ],
+  "scope": [
+    {
+      "area": "models/library_loan.py",
+      "guidelines": [
+        "python.md#imports",
+        "orm.md#methods-and-extension-points"
+      ],
+      "examples": [
+        "examples_python.md",
+        "examples_orm.md"
+      ]
+    }
+  ],
+  "planningReads": [
+    "python.md",
+    "orm.md",
+    "examples_python.md",
+    "examples_orm.md"
+  ],
+  "requirements": [
+    {
+      "id": "1",
+      "priority": "must",
+      "description": "Portal users cannot edit a confirmed loan.",
+      "source": "Portal users cannot edit a confirmed loan.",
+      "checks": [
+        "Run the portal write test and verify it raises AccessError."
+      ]
+    }
+  ],
+  "outOfScope": [],
+  "assumptions": [],
+  "changes": [],
+  "review": null
+}

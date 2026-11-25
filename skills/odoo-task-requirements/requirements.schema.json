@@ -1,0 +1,259 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "task": {
+      "$ref": "#/$defs/nonblank"
+    },
+    "base": {
+      "type": "object",
+      "properties": {
+        "branch": {
+          "$ref": "#/$defs/nonblank"
+        },
+        "commit": {
+          "$ref": "#/$defs/commitHash"
+        }
+      },
+      "required": [
+        "branch",
+        "commit"
+      ],
+      "additionalProperties": false
+    },
+    "acceptance": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/nonblank"
+      }
+    },
+    "scope": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "area": {
+            "$ref": "#/$defs/nonblank"
+          },
+          "guidelines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/nonblank"
+            }
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/nonblank"
+            }
+          }
+        },
+        "required": [
+          "area",
+          "guidelines",
+          "examples"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "planningReads": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/nonblank"
+      }
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/nonblank"
+          },
+          "priority": {
+            "enum": [
+              "must",
+              "should"
+            ]
+          },
+          "description": {
+            "$ref": "#/$defs/nonblank"
+          },
+          "source": {
+            "$ref": "#/$defs/nonblank"
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/nonblank"
+            },
+            "minItems": 1
+          }
+        },
+        "required": [
+          "id",
+          "priority",
+          "description",
+          "source",
+          "checks"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "outOfScope": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/nonblank"
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/nonblank"
+      }
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/nonblank"
+      }
+    },
+    "review": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/nonblank"
+              },
+              "passes": {
+                "type": "boolean"
+              },
+              "evidence": {
+                "$ref": "#/$defs/nonblank"
+              }
+            },
+            "required": [
+              "id",
+              "passes",
+              "evidence"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "reviewedFiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonblank"
+          }
+        },
+        "guidelinesRead": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonblank"
+          },
+          "minItems": 1
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/nonblank"
+              },
+              "file": {
+                "$ref": "#/$defs/nonblank"
+              },
+              "location": {
+                "$ref": "#/$defs/nonblank"
+              },
+              "defect": {
+                "$ref": "#/$defs/nonblank"
+              },
+              "scenario": {
+                "$ref": "#/$defs/nonblank"
+              },
+              "fix": {
+                "$ref": "#/$defs/nonblank"
+              },
+              "guideline": {
+                "$ref": "#/$defs/nonblank"
+              },
+              "status": {
+                "enum": [
+                  "open",
+                  "fixed",
+                  "flagged"
+                ]
+              },
+              "fixCommit": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^[0-9a-f]{7,40}$",
+                "description": "A Git commit hash when status is fixed, otherwise null."
+              }
+            },
+            "required": [
+              "id",
+              "file",
+              "location",
+              "defect",
+              "scenario",
+              "fix",
+              "guideline",
+              "status",
+              "fixCommit"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "results",
+        "reviewedFiles",
+        "guidelinesRead",
+        "findings"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "task",
+    "base",
+    "acceptance",
+    "scope",
+    "planningReads",
+    "requirements",
+    "outOfScope",
+    "assumptions",
+    "changes",
+    "review"
+  ],
+  "additionalProperties": false,
+  "title": "Pi Odoo task requirements and review",
+  "description": "Version 1 task contract and evidence for the Pi review gate.",
+  "$defs": {
+    "nonblank": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "commitHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    }
+  }
+}
