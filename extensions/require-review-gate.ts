@@ -74,7 +74,6 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import Schema from "typebox/schema";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const MIN_FIXED_RATIO = 0.9;
@@ -152,24 +151,68 @@ interface Task {
   review: Review | null;
 }
 
-let validator: ReturnType<typeof Schema.Compile> | undefined;
+interface JsonSchema {
+  $defs?: Record<string, JsonSchema>;
+  $ref?: string;
+  type?: string | string[];
+  const?: unknown;
+  enum?: unknown[];
+  properties?: Record<string, JsonSchema>;
+  required?: string[];
+  additionalProperties?: boolean;
+  items?: JsonSchema;
+  minItems?: number;
+  pattern?: string;
+}
+
+// Validate the keywords used by the shipped schema using Node built-ins.
+function validate(value: unknown, schema: JsonSchema, root: JsonSchema, at = ""): void {
+  const fail = (message: string): never => { throw new Error(`${at || "/"}: ${message}`); };
+  if (schema.$ref) {
+    const target = root.$defs?.[schema.$ref.replace(/^#\/\$defs\//, "")];
+    if (!target) fail(`unknown schema reference ${schema.$ref}`);
+    validate(value, target!, root, at);
+    return;
+  }
+  const kind = Array.isArray(value) ? "array" : value === null ? "null" : typeof value;
+  if (schema.type && ![schema.type].flat().includes(kind)) {
+    fail(`must be ${[schema.type].flat().join(" or ")}`);
+  }
+  if ("const" in schema && value !== schema.const) fail(`must equal ${schema.const}`);
+  if (schema.enum && !schema.enum.includes(value)) fail(`must be one of ${schema.enum.join(", ")}`);
+  if (typeof value === "string" && schema.pattern && !new RegExp(schema.pattern).test(value)) {
+    fail(`must match pattern ${schema.pattern}`);
+  }
+  if (Array.isArray(value)) {
+    if (value.length < (schema.minItems ?? 0)) fail(`must have at least ${schema.minItems} entries`);
+    const items = schema.items;
+    if (items) value.forEach((entry, index) => validate(entry, items, root, `${at}/${index}`));
+  } else if (kind === "object") {
+    const record = value as Record<string, unknown>;
+    for (const key of schema.required ?? []) {
+      if (!Object.hasOwn(record, key)) fail(`missing required field "${key}"`);
+    }
+    const properties = schema.properties ?? {};
+    for (const [key, entry] of Object.entries(record)) {
+      if (Object.hasOwn(properties, key)) validate(entry, properties[key], root, `${at}/${key}`);
+      else if (schema.additionalProperties === false) fail(`unknown field "${key}"`);
+    }
+  }
+}
+
+let requirementsSchema: JsonSchema | undefined;
 
 function parseTask(file: string): { task: Task; mtime: number } {
-  if (!validator) {
+  if (!requirementsSchema) {
     try {
-      validator = Schema.Compile(JSON.parse(readFileSync(REQUIREMENTS_SCHEMA, "utf8")));
+      requirementsSchema = JSON.parse(readFileSync(REQUIREMENTS_SCHEMA, "utf8")) as JsonSchema;
     } catch (error) {
       throw new Error(`Cannot load the installed schema at ${REQUIREMENTS_SCHEMA}: ${errorMessage(error)}`);
     }
   }
 
   const data: unknown = JSON.parse(readFileSync(file, "utf8"));
-  if (!validator.Check(data)) {
-    const [, issues] = validator.Errors(data);
-    const errors = issues.map((e) => `${e.instancePath || "/"}: ${e.message}`);
-    throw new Error(list(errors, 5));
-  }
-
+  validate(data, requirementsSchema, requirementsSchema);
   const task = data as Task;
   const ids = new Set<string>();
   for (const requirement of task.requirements) {
