@@ -33,18 +33,6 @@ guidelines in `~/src/odoo/log/<task>_requirements.json`. When Pi tries to finish
 `require-review-gate` requests a fresh `odoo-review` and checks the results in the
 same file. The extension uses the JSON schema shipped with the skill.
 
-A passing review completes the task for that session, including after compaction,
-`/reload`, and resume. To reopen it, submit the skill command. Add any requirement
-changes as arguments.
-
-```text
-/skill:odoo-task-requirements
-```
-
-Pi requests a fresh review when the skill loads, including when the requirements
-stay unchanged. Existing version-1 reviews that meet the recorded review criteria
-carry forward on upgrade.
-
 Install the extension, the full requirements skill directory, and `AGENTS.md`
 together. For an in-progress Markdown task, copy the contract into the JSON
 example, preserve the base commit and requirement IDs, and start with
@@ -54,7 +42,7 @@ example, preserve the base commit and requirement IDs, and start with
 (429 tokens-per-minute limit, `Provider error`, overload, timeout, ...). It waits at least 60 s
 (doubling: 60, 120, 240 s), compacts the session when the context is above 20k tokens, and sends
 a custom message that starts a turn ("check your progress and continue; finish so the review
-gate runs"). For an open task, `require-review-gate` adds its state and next steps after compaction. A new
+gate runs"). `require-review-gate` adds the task state and next steps after the compaction. A new
 prompt, another run starting or an abort (Escape) cancels it; 3 recoveries in a row without a
 successful response, or a permanent-looking error (bad credentials, unknown model), stop it with
 a notice. Pi's own retry settings are untouched. It serves interactive and RPC sessions only.
