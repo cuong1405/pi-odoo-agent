@@ -9,8 +9,8 @@ spend it on verification, not on asking.
 1. **Start: `odoo-task-requirements`.** Load it before any code (anything beyond a one-line
    fix). It maps the prompt to the guideline sections that apply, you read them, and it
    writes the requirements file `~/src/odoo/log/<task>_requirements.json`. That file is the
-   single source of truth for the contract and its `review` results. A follow-up prompt changes
-   the file before it changes code.
+   single source of truth for the contract and its `review` results. While the task is open,
+   apply any follow-up requirement changes to the file before changing code.
 2. **Build in small steps.** Whenever you analyse, write or edit a file, first open the
    guideline sections that cover it (index in the skill's `SKILL.md`, whole file, not from
    memory) **and the matching file of `odoo-guideline-examples`**: real Odoo code, good and
@@ -22,8 +22,10 @@ spend it on verification, not on asking.
    holds the turn open until you have reviewed the work with `odoo-review` against the
    requirements file and fixed what it found. Its message gives the exact steps and the bar,
    opens with the task state read from the file and git, and ends with next steps in priority
-   order. After any compaction the same state is posted: resume from it and from the files,
-   not from the summary.
+   order. After compaction of an open task, resume from the posted state and the files.
+   A passing review completes the task. A user invocation of
+   `/skill:odoo-task-requirements` reopens it for a fresh review. Apply any changes
+   supplied with the invocation to the requirements file.
 
 ## Ground truth
 
@@ -38,7 +40,7 @@ spend it on verification, not on asking.
 
 | Skill | Load it when |
 |---|---|
-| `odoo-task-requirements` | the start of every task, and every follow-up prompt |
+| `odoo-task-requirements` | the start of a task, follow-ups that change open requirements, and user invocations after completion |
 | `odoo-guidelines` | writing any file of an addon outside `static/` |
 | `odoo-web-guidelines` | writing JS, Owl templates, SCSS or hoot tests under `static/` |
 | `odoo-guideline-examples` | with each of the two above, for every file you analyse, write or edit |

@@ -4,7 +4,8 @@ description: >-
   Start of an Odoo task: map the prompt to the guideline sections that apply, read them,
   and write the task requirements file the final review is measured against. Use first,
   before any code, when the task is more than a one-line fix; and again whenever a
-  follow-up prompt adds, changes or corrects a requirement.
+  follow-up prompt adds, changes or corrects an open requirement. For a completed task,
+  the user's invocation of this skill's slash command reopens the review gate.
 ---
 
 # Task requirements
@@ -140,8 +141,12 @@ Example review for the requirement in the example file:
 
 ## Keeping it current
 
-- Apply follow-up requirements before code changes. Re-run Scope, Map, Read and
+- While the task is open, apply follow-up requirements before code changes. Re-run Scope, Map, Read and
   both passes for the affected areas. Preserve stable IDs, record replacements
   and their reasons in `changes`, and reset `review` to `null`.
+- After the gate has passed, the user's `/skill:odoo-task-requirements` command reopens
+  it for a fresh review. Apply any changes from the command arguments and reset
+  `review` to `null` when updating the contract. With no requirement changes requested,
+  keep the existing contract for the fresh review.
 - Update the scope map and read its guidelines and examples before entering a
   new area. After compaction, re-read the JSON and the applicable skill sections.

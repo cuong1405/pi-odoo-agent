@@ -1,7 +1,7 @@
 /**
  * require-review-gate: the agent may not stop working until it has reviewed its own work with
- * the odoo-review skill against the task requirements and the review bar is met. After every
- * compaction it is told where the task stands and what to do next.
+ * the odoo-review skill against the task requirements and the review bar is met. While the
+ * task is open, compaction is followed by its current state and next steps.
  *
  * Why: in a long autonomous session nobody reviews between rounds, and an agent working from
  * a bloated context gives up ("scope too large", "missing infrastructure") or says "done".
@@ -36,6 +36,11 @@
  *     - at least 90% of the findings are `fixed` AND name a commit hash that exists in the
  *       repo and is reachable from HEAD.
  *     Otherwise the agent goes back to work on the open items.
+ *  3. A passing review completes the task across prompts, edits, compaction, reload and resume.
+ *     Submit `/skill:odoo-task-requirements` to reopen it and require a fresh review. The
+ *     review follows the rewritten contract when the agent successfully updates requirements.
+ *     An existing version-1 review can complete a task on upgrade if its recorded evidence
+ *     passes the checks that can be verified without the original review run.
  *
  * Every message that sends the agent back has two parts, both computed from the file and git:
  *  - Task state: requirements (MUST/SHOULD counts), the review if it was written (met count,
@@ -62,8 +67,8 @@
  * stalled agent: when the gate has run more than 3 times in a row and no edit/write call (any
  * file, the requirements file included) happened between the runs, the gate lets the agent
  * stop and shows the human a warning with what is still open. A new user prompt starts the
- * review stage again. State that must survive /reload and resume (code edited, requirements
- * file written, repos edited) is stored with `pi.appendEntry` and restored on `session_start`.
+ * review stage again while the task is open. Work and lifecycle state are stored with
+ * `pi.appendEntry` and restored on `session_start`.
  *
  * Install: copy to ~/.pi/agent/extensions/require-review-gate.ts and run /reload.
  * Env: ODOO_LOG_DIR overrides the log directory (default ~/src/odoo/log);
@@ -71,9 +76,11 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const MIN_FIXED_RATIO = 0.9;
@@ -101,7 +108,20 @@ const SKILLS_DIR = path.resolve(
 );
 const REVIEW_SKILL_MD = path.join(SKILLS_DIR, "odoo-review", "SKILL.md");
 const REQUIREMENTS_SUFFIX = "_requirements.json";
+const REQUIREMENTS_COMMAND = "/skill:odoo-task-requirements";
 const REQUIREMENTS_SCHEMA = path.join(SKILLS_DIR, "odoo-task-requirements", "requirements.schema.json");
+
+function requirementsSkillArguments(text: string): string | undefined {
+  if (text === REQUIREMENTS_COMMAND || text.startsWith(`${REQUIREMENTS_COMMAND} `)) {
+    return text.slice(REQUIREMENTS_COMMAND.length).trim();
+  }
+}
+
+function expandedRequirementsSkillArguments(prompt: string): string | undefined {
+  // Pi appends the user's arguments after the skill body, which is already expanded here.
+  const invocation = prompt.match(/^<skill name="odoo-task-requirements" location="[^"]+">\n[\s\S]*?\n<\/skill>(?:\n\n([\s\S]+))?$/);
+  return invocation ? (invocation[1] ?? "").trim() : undefined;
+}
 
 function expand(p: string, cwd: string): string {
   if (p === "~" || p.startsWith("~/")) p = path.join(os.homedir(), p.slice(1));
@@ -111,6 +131,10 @@ function expand(p: string, cwd: string): string {
 function inputPath(input: Record<string, unknown>): string | undefined {
   const raw = input.path ?? input.file_path ?? input.filePath;
   return typeof raw === "string" && raw ? raw : undefined;
+}
+
+function isRequirementsFile(abs: string): boolean {
+  return abs.startsWith(LOG_DIR + path.sep) && abs.endsWith(REQUIREMENTS_SUFFIX);
 }
 
 /** Files that are not "the work": logs and the requirements file, scratch, installed skills. */
@@ -222,6 +246,31 @@ function parseTask(file: string): { task: Task; mtime: number } {
   return { task, mtime: statSync(file).mtimeMs };
 }
 
+function readTask(file: string): Task | undefined {
+  try {
+    return parseTask(file).task;
+  } catch {
+    return undefined;
+  }
+}
+
+function contractOf(task: Task) {
+  const { review, ...contract } = task;
+  return contract;
+}
+
+function reviewDigest(review: Review): string {
+  const json = JSON.stringify(review, (_key, value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, value[key]]));
+  });
+  return createHash("sha256").update(json).digest("hex");
+}
+
+function isStaleReview(review: Review, mtime: number, since: number, digests: string[]): boolean {
+  return mtime < since || (digests.length > 0 && digests.includes(reviewDigest(review)));
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -320,12 +369,17 @@ function reviewRequest(requirementsFile: string): string {
   );
 }
 
-interface ReviewContext {
+interface ReviewFreshness {
   requestTime: number;
   skillReadAfterRequest: boolean;
   guidelineReadsAfterRequest: Set<string>; // paths relative to the skills directory opened after the request
+  staleReviews: string[];
+}
+
+interface ReviewContext {
   roots: Set<string>;
   requirementsFile: string;
+  freshness?: ReviewFreshness;
 }
 
 interface Problem {
@@ -344,7 +398,7 @@ function list(items: string[], cap = 25): string {
  * findings, the 90% bar), then the files the review misses, then problems of its format. With
  * no review written since the request the one step is to write it.
  */
-function reviewProblems(c: ReviewContext): Problem[] {
+function checkReview(c: ReviewContext): { problems: Problem[]; review?: Review } {
   const problems: Problem[] = [];
   const add = (priority: number, text: string) => problems.push({ priority, text });
   const file = c.requirementsFile;
@@ -353,22 +407,26 @@ function reviewProblems(c: ReviewContext): Problem[] {
     parsed = parseTask(file);
   } catch (error) {
     add(0, `Repair ${file} using the requirements schema. ${errorMessage(error)}`);
-    return problems;
+    return { problems };
   }
   const { task, mtime } = parsed;
   const { review } = task;
-  if (!review || mtime < c.requestTime) {
+  const fresh = c.freshness;
+  const stale = fresh && review && isStaleReview(review, mtime, fresh.requestTime, fresh.staleReviews);
+  if (!review || stale) {
     add(0, `Record a fresh review in the review field of ${file}, using ${REQUIREMENTS_SCHEMA}.`);
   }
 
-  if (!c.skillReadAfterRequest) {
+  if (fresh && !fresh.skillReadAfterRequest) {
     add(5, `Open ${REVIEW_SKILL_MD} with the read tool and follow it before submitting the review.`);
   }
-  if (!review || mtime < c.requestTime) return problems;
+  if (!review || stale) return { problems };
 
-  const unread = [...new Set(review.guidelinesRead)].filter((f) => !c.guidelineReadsAfterRequest.has(f));
-  if (unread.length) {
-    add(5, `review.guidelinesRead lists files not opened since the review request: ${list(unread)}.`);
+  if (fresh) {
+    const unread = [...new Set(review.guidelinesRead)].filter((f) => !fresh.guidelineReadsAfterRequest.has(f));
+    if (unread.length) {
+      add(5, `review.guidelinesRead lists files not opened since the review request: ${list(unread)}.`);
+    }
   }
 
   const ids = new Set(task.requirements.map(({ id }) => id));
@@ -425,7 +483,7 @@ function reviewProblems(c: ReviewContext): Problem[] {
     add(2, `Only ${fixed}/${review.findings.length} findings are fixed with a reachable commit ` +
       `(need ${MIN_FIXED_RATIO * 100}%). Open: ${list(details)}.`);
   }
-  return problems.sort((x, y) => x.priority - y.priority);
+  return { problems: problems.sort((x, y) => x.priority - y.priority), review };
 }
 
 // ------------------------------------------------------- task state
@@ -440,7 +498,7 @@ interface Snapshot {
  * was written, if the file was written since `reviewSince`) and git, never from the
  * conversation: it must hold after a compaction, a /reload or a resume.
  */
-function snapshot(c: { requirementsFile: string; roots: Set<string>; reviewSince: number }): Snapshot {
+function snapshot(c: { requirementsFile: string; roots: Set<string>; reviewSince: number; staleReviews: string[] }): Snapshot {
   let parsed: ReturnType<typeof parseTask>;
   try {
     parsed = parseTask(c.requirementsFile);
@@ -463,7 +521,7 @@ function snapshot(c: { requirementsFile: string; roots: Set<string>; reviewSince
     `(Checks: ${clip(requirement.checks.join("; "), 100)})`;
 
   const { review } = task;
-  if (!review || mtime < c.reviewSince) {
+  if (!review || isStaleReview(review, mtime, c.reviewSince, c.staleReviews)) {
     lines.push("- Review: pending fresh verification.");
     if (must.length) lines.push(`- MUST requirements: ${list(must.map(reqLine), 12)}.`);
     steps.push("Deliver all MUST requirements and commit as you go.");
@@ -523,6 +581,18 @@ const MISSING_REQUIREMENTS =
 
 // ------------------------------------------------------------ extension
 
+type TaskLifecycle =
+  | { status: "open" }
+  | { status: "complete"; file: string; reviewDigest: string }
+  | { status: "reopened"; file: string; staleReviews: string[] };
+
+interface GateState {
+  codeEdited?: boolean;
+  requirementsTouched?: boolean;
+  editedDirs?: string[];
+  task?: TaskLifecycle;
+}
+
 export default function (pi: ExtensionAPI) {
   let seq = 0;
   let lastEdit = 0; // 0 = no code edited
@@ -535,27 +605,46 @@ export default function (pi: ExtensionAPI) {
   let missingReported = false;
   let lastAnyEdit = 0; // any edit/write call, whatever the file (the requirements file counts)
   let editSnapshot = -1; // lastAnyEdit at the previous gate run; -1 = no run yet
-  let outbox: { content: string; isRequest: boolean } | undefined; // sent after a compaction
+  let outbox: { content: string; requestFile?: string } | undefined; // sent after a compaction
   let gateCompacting = false; // the compaction in progress was started by the gate
   let idleRuns = 0; // consecutive gate runs with no edit/write call in between
   const skillReads = new Map<string, number>(); // abs path of skill .md -> seq when opened
   const editedDirs = new Set<string>();
+  let task: TaskLifecycle = { status: "open" };
+  let reviewAtRequest: string | undefined;
+  let trackRequirementsWrites = false;
+  const skillInputs = new Set<string>(); // explicit, unexpanded input from a human
+  const rewriteWrites = new Map<string, { file: string; previous: Task | undefined }>();
 
   const persist = () =>
-    pi.appendEntry(STATE_ENTRY, {
+    pi.appendEntry<GateState>(STATE_ENTRY, {
       codeEdited: lastEdit > 0,
       requirementsTouched,
       editedDirs: [...editedDirs],
+      task,
     });
+
+  const markComplete = (file: string, review: Review) => {
+    task = { status: "complete", file, reviewDigest: reviewDigest(review) };
+    persist();
+  };
 
   const resetReview = () => {
     requestSeq = requestTime = skillSeq = nudges = 0;
+    reviewAtRequest = undefined;
     missingReported = false;
     editSnapshot = -1;
     idleRuns = 0;
     outbox = undefined;
     gateCompacting = false;
   };
+
+  const clearSkillInvocation = () => {
+    trackRequirementsWrites = false;
+    skillInputs.clear();
+    rewriteWrites.clear();
+  };
+
   pi.on("session_start", async (_event, ctx) => {
     seq = lastEdit = lastAnyEdit = 0;
     requirementsTouched = false;
@@ -563,26 +652,65 @@ export default function (pi: ExtensionAPI) {
     skillReads.clear();
     editedDirs.clear();
     resetReview();
+    clearSkillInvocation();
+    let saved: GateState | undefined;
     try {
-      const saved = ctx.sessionManager
+      const entry = ctx.sessionManager
         .getBranch()
-        .filter((e: any) => e.type === "custom" && e.customType === STATE_ENTRY)
-        .at(-1) as { data?: { codeEdited?: boolean; requirementsTouched?: boolean; editedDirs?: string[] } } | undefined;
-      if (saved?.data) {
-        if (saved.data.codeEdited) lastEdit = ++seq;
-        requirementsTouched = saved.data.requirementsTouched === true;
-        for (const d of saved.data.editedDirs ?? []) editedDirs.add(d);
-      }
+        .filter((e) => e.type === "custom" && e.customType === STATE_ENTRY)
+        .at(-1);
+      if (entry?.type === "custom") saved = entry.data as GateState | undefined;
     } catch {
       // a session without a readable branch simply starts with no remembered work
     }
+    if (saved?.codeEdited) lastEdit = ++seq;
+    requirementsTouched = saved?.requirementsTouched === true;
+    for (const dir of saved?.editedDirs ?? []) editedDirs.add(dir);
+
+    task = saved?.task ?? { status: "open" };
+    if (saved?.task) return;
+    // Version-1 files have review evidence but no record of when the old gate requested it.
+    const file = newestRequirementsFile();
+    if (file) {
+      const checked = checkReview({ requirementsFile: file, roots: reposEdited(ctx.cwd) });
+      if (checked.review && !checked.problems.length) {
+        markComplete(file, checked.review);
+        return;
+      }
+    }
+    persist();
   });
+
+  pi.on("input", async (event) => {
+    if (!event.streamingBehavior) skillInputs.clear();
+    if (task.status !== "complete" || event.source === "extension") return;
+    const args = requirementsSkillArguments(event.text);
+    if (args !== undefined) skillInputs.add(args);
+  });
+
+  const reopenFromSkill = (prompt: string) => {
+    if (task.status !== "complete" || !skillInputs.size) return;
+    const args = expandedRequirementsSkillArguments(prompt);
+    if (args === undefined || !skillInputs.delete(args)) return;
+    task = { status: "reopened", file: task.file, staleReviews: [task.reviewDigest] };
+    resetReview();
+    trackRequirementsWrites = true;
+    persist();
+  };
+
   pi.on("before_agent_start", async (event) => {
-    if ((event as { messageType?: string }).messageType === "user") {
+    if (event.messageType === "user") {
       resetReview();
       promptTime = Date.now();
+      reopenFromSkill(event.prompt);
     }
-    return undefined;
+  });
+
+  pi.on("message_start", async ({ message }) => {
+    // Steering and queued follow-ups enter the current run without before_agent_start.
+    if (!skillInputs.size || message.role !== "user") return;
+    if (typeof message.content === "string") reopenFromSkill(message.content);
+    else if (message.content[0]?.type === "text") reopenFromSkill(message.content[0].text);
   });
 
   const noteSkillRead = (abs: string) => {
@@ -600,9 +728,14 @@ export default function (pi: ExtensionAPI) {
         lastAnyEdit = ++seq;
         const abs = expand(raw, ctx.cwd);
         let changed = false;
-        if (abs.startsWith(LOG_DIR + path.sep) && abs.endsWith(REQUIREMENTS_SUFFIX) && !requirementsTouched) {
-          requirementsTouched = true;
-          changed = true;
+        if (isRequirementsFile(abs)) {
+          if (trackRequirementsWrites) {
+            rewriteWrites.set(event.toolCallId, { file: abs, previous: readTask(abs) });
+          }
+          if (!requirementsTouched) {
+            requirementsTouched = true;
+            changed = true;
+          }
         }
         if (isCodeEdit(abs)) {
           if (lastEdit === 0) changed = true;
@@ -629,21 +762,54 @@ export default function (pi: ExtensionAPI) {
     return undefined;
   });
 
-  const inFlight = () => lastEdit > 0 || requirementsTouched;
-  const reposEdited = () => {
+  pi.on("tool_result", async (event) => {
+    const write = rewriteWrites.get(event.toolCallId);
+    if (!write) return;
+    rewriteWrites.delete(event.toolCallId);
+    if (event.isError || task.status !== "reopened") return;
+    const { file, previous } = write;
+    const rewritten = readTask(file);
+    if (!rewritten) return;
+    const reviewReset = previous?.review && !rewritten.review;
+    if (previous && !reviewReset && isDeepStrictEqual(contractOf(previous), contractOf(rewritten))) return;
+
+    const staleReviews = new Set(task.staleReviews);
+    if (previous?.review) staleReviews.add(reviewDigest(previous.review));
+    if (rewritten.review) staleReviews.add(reviewDigest(rewritten.review));
+    task = { status: "reopened", file, staleReviews: [...staleReviews] };
+    clearSkillInvocation();
+    persist();
+  });
+
+  const inFlight = () => task.status === "reopened" || lastEdit > 0 || requirementsTouched;
+  const reposEdited = (fallbackCwd?: string) => {
     const roots = new Set<string>();
     for (const dir of editedDirs) {
       const root = repoRoot(dir);
       if (root) roots.add(root);
     }
+    if (!roots.size && fallbackCwd) {
+      const root = repoRoot(fallbackCwd);
+      if (root) roots.add(root);
+    }
     return roots;
   };
 
+  const currentFile = () => {
+    if (task.status === "open") return newestRequirementsFile();
+    return existsSync(task.file) ? task.file : undefined;
+  };
+  const staleReviews = () => {
+    if (task.status !== "reopened") return [];
+    return reviewAtRequest ? [...task.staleReviews, reviewAtRequest] : task.staleReviews;
+  };
+
   pi.on("agent_before_settle", async (event, ctx) => {
+    if (task.status === "complete") return undefined;
     if (!inFlight()) return undefined; // nothing started: questions and read-only work are never held
     if (event.outcome !== "completed") return undefined; // errors/aborts are hard exits (provider errors: auto-recover.ts)
 
-    const requirementsFile = newestRequirementsFile();
+    const requirementsFile = currentFile();
     if (!requirementsFile) {
       if (missingReported) return undefined; // already told the human: let the agent finish
       missingReported = true;
@@ -660,7 +826,7 @@ export default function (pi: ExtensionAPI) {
       };
     }
 
-    const roots = reposEdited();
+    const roots = reposEdited(task.status === "reopened" ? ctx.cwd : undefined);
     const isRequest = requestSeq === 0;
     let problems: Problem[];
     if (isRequest) {
@@ -668,19 +834,21 @@ export default function (pi: ExtensionAPI) {
     } else {
       const reads = new Set<string>();
       for (const [abs, n] of skillReads) if (n > requestSeq) reads.add(path.relative(SKILLS_DIR, abs));
-      problems = reviewProblems({
-        requestTime,
-        skillReadAfterRequest: skillSeq > requestSeq,
-        guidelineReadsAfterRequest: reads,
+      const checked = checkReview({
+        freshness: {
+          requestTime,
+          skillReadAfterRequest: skillSeq > requestSeq,
+          guidelineReadsAfterRequest: reads,
+          staleReviews: staleReviews(),
+        },
         roots,
         requirementsFile,
       });
-    }
-
-    if (problems.length === 0) {
-      nudges = 0;
-      idleRuns = 0;
-      return undefined;
+      problems = checked.problems;
+      if (!problems.length && checked.review) {
+        markComplete(requirementsFile, checked.review);
+        return undefined;
+      }
     }
 
     if (editSnapshot >= 0 && lastAnyEdit === editSnapshot) idleRuns++;
@@ -701,6 +869,7 @@ export default function (pi: ExtensionAPI) {
       requirementsFile,
       roots,
       reviewSince: isRequest ? Number.POSITIVE_INFINITY : requestTime,
+      staleReviews: staleReviews(),
     });
     const content = isRequest
       ? `Review gate: you are about to finish.\n\n${state.text}\n\n${problems[0].text}`
@@ -708,11 +877,12 @@ export default function (pi: ExtensionAPI) {
         `Next steps, highest priority first:\n${numbered(problems.map((p) => p.text))}\n\n` +
         `Do not report completion until the review bar is met. If something blocks you, ` +
         `record it in the requirements file, try another approach, and keep working on the rest.`;
-    outbox = { content, isRequest };
+    outbox = { content, requestFile: isRequest ? requirementsFile : undefined };
     return undefined;
   });
 
   pi.on("agent_settled", async (event, ctx) => {
+    clearSkillInvocation();
     const msg = outbox;
     outbox = undefined;
     if (!msg || event.aborted) return;
@@ -720,9 +890,13 @@ export default function (pi: ExtensionAPI) {
     const send = () => {
       if (sent) return;
       sent = true;
-      if (msg.isRequest) {
+      if (msg.requestFile) {
         requestSeq = ++seq;
         requestTime = Date.now();
+        if (task.status === "reopened") {
+          const review = readTask(msg.requestFile)?.review;
+          if (review) reviewAtRequest = reviewDigest(review);
+        }
       }
       pi.sendMessage(
         { customType: "review-gate", content: msg.content, display: true },
@@ -760,14 +934,15 @@ export default function (pi: ExtensionAPI) {
       gateCompacting = false; // the gate's own compaction: its message follows with the state
       return;
     }
-    if (!inFlight()) return;
-    const requirementsFile = newestRequirementsFile();
+    if (task.status === "complete" || !inFlight()) return;
+    const requirementsFile = currentFile();
     if (!requirementsFile) return;
     try {
       const state = snapshot({
         requirementsFile,
-        roots: reposEdited(),
-        reviewSince: requestTime || promptTime,
+        roots: reposEdited(task.status === "reopened" ? ctx.cwd : undefined),
+        reviewSince: requestTime || (task.status === "reopened" ? Number.POSITIVE_INFINITY : promptTime),
+        staleReviews: staleReviews(),
       });
       pi.sendMessage(
         {
