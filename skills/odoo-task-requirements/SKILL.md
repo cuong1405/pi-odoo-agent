@@ -1,18 +1,21 @@
 ---
 name: odoo-task-requirements
 description: >-
-  Start of an Odoo task: map the prompt to the guideline sections that apply, read them,
-  and write the task requirements file the final review is measured against. Use first,
-  before any code, when the task is more than a one-line fix; and again whenever a
-  follow-up prompt adds, changes or corrects a requirement.
+  Create or update the Odoo task requirements before implementation. Use when the user
+  starts the current prompt with `/skill:odoo-task-requirements` to start a task or
+  change its requirements.
 ---
 
 # Task requirements
 
-This skill is the first half of a pair. `odoo-review` runs at the end of every round and
-judges the change against the house rules and on its merits; this skill runs once, at the very
-start, and does the same two passes on the **prompt** before any code exists. It follows the
-same process on purpose: where `odoo-review` maps changed files to guideline sections, this
+Only a user prompt that starts with `/skill:odoo-task-requirements` authorizes creating or
+changing the task contract. Apply this rule to initial tasks and to every follow-up that
+adds, changes, or corrects a requirement. Treat mentions of the skill, automatic skill reads,
+and review continuations as read-only for the contract.
+
+`odoo-review` checks the work against the house rules and on its merits. This skill does the
+same two passes on the **prompt** before implementing the new or changed requirements.
+Where `odoo-review` maps changed files to guideline sections, this
 skill maps the files the task will need; where the review hunts for the input that breaks a
 hunk, this skill hunts for the input that breaks a requirement. The one difference is the
 output: a requirements file, the only thing the final review (`odoo-review`, run by the review
@@ -140,8 +143,11 @@ Example review for the requirement in the example file:
 
 ## Keeping it current
 
-- Apply follow-up requirements before code changes. Re-run Scope, Map, Read and
-  both passes for the affected areas. Preserve stable IDs, record replacements
-  and their reasons in `changes`, and reset `review` to `null`.
-- Update the scope map and read its guidelines and examples before entering a
-  new area. After compaction, re-read the JSON and the applicable skill sections.
+- For an explicitly invoked follow-up that changes requirements, re-run Scope, Map, Read,
+  and both passes for the affected areas before changing code. Preserve stable IDs, record
+  replacements and their reasons in `changes`, and reset `review` to `null`.
+- When a user invokes the skill for a completed task without supplying requirement changes,
+  use the existing contract for the fresh review.
+- Read the applicable guidelines and examples before entering a new area. Update the scope
+  map as part of an authorized contract change. After compaction, re-read the JSON and the
+  applicable skill sections.

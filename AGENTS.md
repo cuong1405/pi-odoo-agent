@@ -6,11 +6,12 @@ spend it on verification, not on asking.
 
 ## How a task runs
 
-1. **Start: `odoo-task-requirements`.** Load it before any code (anything beyond a one-line
-   fix). It maps the prompt to the guideline sections that apply, you read them, and it
-   writes the requirements file `~/src/odoo/log/<task>_requirements.json`. That file is the
-   single source of truth for the contract and its `review` results. A follow-up prompt changes
-   the file before it changes code.
+1. **Start or change task requirements.** The user must start the current prompt with
+   `/skill:odoo-task-requirements` to initialize a task or change its requirements. Follow the
+   skill and write or update `~/src/odoo/log/<task>_requirements.json` before implementing that
+   work. If the command is missing, ask the user to resubmit with it before proceeding. For
+   questions and follow-ups within the recorded requirements, treat the contract as read-only.
+   The review workflow records its results in the `review` field of the same file.
 2. **Build in small steps.** Whenever you analyse, write or edit a file, first open the
    guideline sections that cover it (index in the skill's `SKILL.md`, whole file, not from
    memory) **and the matching file of `odoo-guideline-examples`**: real Odoo code, good and
@@ -38,7 +39,7 @@ spend it on verification, not on asking.
 
 | Skill | Load it when |
 |---|---|
-| `odoo-task-requirements` | the start of every task, and every follow-up prompt |
+| `odoo-task-requirements` | the user starts the current prompt with `/skill:odoo-task-requirements` |
 | `odoo-guidelines` | writing any file of an addon outside `static/` |
 | `odoo-web-guidelines` | writing JS, Owl templates, SCSS or hoot tests under `static/` |
 | `odoo-guideline-examples` | with each of the two above, for every file you analyse, write or edit |
@@ -177,9 +178,9 @@ self.assertEqual(
 
 ## Autonomous operation
 
-- **Do not stop to ask.** Resolve ambiguity yourself: pick the interpretation closest to the
-  stated requirement and to Odoo conventions (skills, then the 20.0 source) and record it
-  under Assumptions. You cannot hand the turn back.
+- **Resolve implementation ambiguity yourself.** Once the task is authorized, pick the
+  interpretation closest to the stated requirement and to Odoo conventions (skills, then the
+  20.0 source) and record it under Assumptions.
 - If something truly blocks a requirement (missing credentials, contradictory requirements),
   note exactly what blocks you and what you tried, try another approach, and keep working on
   the rest. Task size, time and "missing infrastructure" are never blockers: a feeling that
